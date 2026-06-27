@@ -355,7 +355,7 @@ func deleteDirectory(server, token, dirID string) error {
 
 func moveItem(server, token, itemID, newParentID string) error {
 	body, _ := json.Marshal(map[string]string{"parentId": newParentID})
-	req, err := http.NewRequest(http.MethodPut, server+"/api/fs/"+itemID, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPatch, server+"/api/fs/"+itemID, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -406,7 +406,7 @@ func listLocations(server, token string) ([]location, error) {
 
 func editFileNote(server, token, fileID, note string) error {
 	body, _ := json.Marshal(map[string]string{"note": note})
-	req, err := http.NewRequest(http.MethodPut, server+"/api/fs/"+fileID, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPatch, server+"/api/fs/"+fileID, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -1184,7 +1184,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 					Options(
 						huh.NewOption("Fazer Upload", "upload"),
 						huh.NewOption("Gerenciar Biblioteca", "library"),
-						huh.NewOption("Gerenciar Pasta Destino", "folders"),
+						huh.NewOption("Gerenciar Buzzheavier", "folders"),
 						huh.NewOption("Gerenciar Perfis", "profiles"),
 						huh.NewOption("Sair", "exit"),
 					).
@@ -1227,69 +1227,191 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 		}
 
 		if action == "upload" {
+			var uploadType string
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().
+					Title("O que deseja enviar?").
+					Options(
+						huh.NewOption("Arquivo ou pasta avulso", "manual"),
+						huh.NewOption("Capítulo(s) de obra da biblioteca", "library"),
+						huh.NewOption("← Voltar", "back"),
+					).Value(&uploadType),
+			)).Run(); err != nil {
+				if !errors.Is(err, huh.ErrUserAborted) {
+					return err
+				}
+				continue
+			}
+			if uploadType == "back" {
+				continue
+			}
+
+			if uploadType == "library" {
+				var libOpts []huh.Option[string]
+				for i, item := range cfg.Library {
+					if item.LocalPath != "" {
+						libOpts = append(libOpts, huh.NewOption(item.Name, strconv.Itoa(i)))
+					}
+				}
+				if len(libOpts) == 0 {
+					eprintln("barfi: nenhuma obra com caminho local. Adicione obras na biblioteca primeiro.")
+					continue
+				}
+				libOpts = append(libOpts, huh.NewOption("← Voltar", "__back__"))
+
+				var obraIdxStr string
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Qual obra?").
+						Options(libOpts...).
+						Value(&obraIdxStr),
+				)).Run(); err != nil || obraIdxStr == "__back__" {
+					if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+						return err
+					}
+					continue
+				}
+				obraIdx, _ := strconv.Atoi(obraIdxStr)
+				if obraIdx >= len(cfg.Library) {
+					continue
+				}
+				obra := cfg.Library[obraIdx]
+
+				entries, err := os.ReadDir(obra.LocalPath)
+				if err != nil {
+					eprintln("barfi: ler pasta da obra:", err)
+					continue
+				}
+				if len(entries) == 0 {
+					eprintln("barfi: pasta da obra está vazia:", obra.LocalPath)
+					continue
+				}
+
+				var batchMode string
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Upload de: "+obra.Name).
+						Description("Pasta: "+obra.LocalPath).
+						Options(
+							huh.NewOption("Enviar tudo", "all"),
+							huh.NewOption("Selecionar capítulos/arquivos", "select"),
+							huh.NewOption("← Voltar", "back"),
+						).Value(&batchMode),
+				)).Run(); err != nil || batchMode == "back" {
+					if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+						return err
+					}
+					continue
+				}
+
+				var selectedPaths []string
+				if batchMode == "all" {
+					for _, e := range entries {
+						selectedPaths = append(selectedPaths, filepath.Join(obra.LocalPath, e.Name()))
+					}
+				} else {
+					var entryOpts []huh.Option[string]
+					for _, e := range entries {
+						label := e.Name()
+						if e.IsDir() {
+							label = "[pasta] " + label
+						}
+						entryOpts = append(entryOpts, huh.NewOption(label, filepath.Join(obra.LocalPath, e.Name())))
+					}
+					var selected []string
+					if err := huh.NewForm(huh.NewGroup(
+						huh.NewMultiSelect[string]().
+							Title("Selecionar de: " + obra.Name).
+							Description("Espaço para marcar, enter para confirmar.").
+							Options(entryOpts...).
+							Value(&selected),
+					)).Run(); err != nil {
+						if !errors.Is(err, huh.ErrUserAborted) {
+							return err
+						}
+						continue
+					}
+					if len(selected) == 0 {
+						eprintln("barfi: nenhum item selecionado")
+						continue
+					}
+					selectedPaths = selected
+				}
+
+				var note string = cfg.DefaultNote
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewInput().
+						Title("Nota (Opcional)").
+						Description("Em branco mantém a nota padrão do perfil.").
+						Value(&note),
+				)).Run(); err != nil {
+					if !errors.Is(err, huh.ErrUserAborted) {
+						return err
+					}
+					continue
+				}
+
+				if obra.FolderID != "" {
+					cfg.ParentId = obra.FolderID
+				}
+				opts.files = selectedPaths
+				opts.recursive = false
+				opts.note = note
+				return nil
+			}
+
+			// --- upload avulso ---
 			var fileOrDir string
 			var recursive bool
 			var isDir bool
 
-			uploadForm := huh.NewForm(
-				huh.NewGroup(
-					huh.NewInput().
-						Title("Qual arquivo ou pasta deseja enviar?").
-						Description("Caminho completo ou relativo (aspas são ignoradas).").
-						Value(&fileOrDir).
-						Validate(func(str string) error {
-							str = strings.Trim(str, `"' `)
-							if str == "" {
-								return errors.New("O caminho não pode ser vazio")
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewInput().
+					Title("Arquivo ou pasta para enviar").
+					Description("Caminho completo ou relativo. Aspas são ignoradas. Aceita Windows e WSL.").
+					Value(&fileOrDir).
+					Validate(func(str string) error {
+						str = strings.Trim(str, `"' `)
+						if str == "" {
+							return errors.New("o caminho não pode ser vazio")
+						}
+						info, err := os.Stat(normalizePath(str))
+						if err != nil {
+							if os.IsNotExist(err) {
+								return errors.New("arquivo ou pasta não encontrado(a)")
 							}
-
-							normalizedStr := normalizePath(str)
-							info, err := os.Stat(normalizedStr)
-							if err != nil {
-								if os.IsNotExist(err) {
-									return errors.New("Arquivo/Pasta não encontrado(a)")
-								}
-								return err
-							}
-							isDir = info.IsDir()
-							return nil
-						}),
-				),
-			)
-
-			if err := uploadForm.Run(); err != nil {
+							return err
+						}
+						isDir = info.IsDir()
+						return nil
+					}),
+			)).Run(); err != nil {
 				if errors.Is(err, huh.ErrUserAborted) {
 					continue
 				}
 				return err
 			}
-
 			fileOrDir = strings.Trim(fileOrDir, `"' `)
 
 			var extraFields []huh.Field
 			if isDir {
 				extraFields = append(extraFields, huh.NewConfirm().
-					Title("Fazer upload do conteúdo em subpastas?").
-					Description("Acessa recursivamente.").
+					Title("Incluir subpastas?").
+					Description("Acessa recursivamente todos os subdiretórios.").
 					Value(&recursive),
 				)
 			}
-
 			var note string = cfg.DefaultNote
 			extraFields = append(extraFields, huh.NewInput().
 				Title("Nota (Opcional)").
-				Description("Máximo de 500 caracteres. Pressione Enter para manter a nota padrão do perfil.").
+				Description("Máximo 500 caracteres. Em branco usa a nota padrão do perfil.").
 				Value(&note),
 			)
-
-			if len(extraFields) > 0 {
-				extraForm := huh.NewForm(huh.NewGroup(extraFields...))
-				if err := extraForm.Run(); err != nil {
-					if errors.Is(err, huh.ErrUserAborted) {
-						continue
-					}
-					return err
+			if err := huh.NewForm(huh.NewGroup(extraFields...)).Run(); err != nil {
+				if errors.Is(err, huh.ErrUserAborted) {
+					continue
 				}
+				return err
 			}
 
 			if cfg.Token != "" {
@@ -1305,9 +1427,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 
 			opts.files = []string{normalizePath(fileOrDir)}
 			opts.recursive = recursive
-			opts.guestLink = ""
 			opts.note = note
-
 			return nil
 		}
 	}
