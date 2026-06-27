@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/charmbracelet/huh"
 )
 
 func eprintf(format string, args ...any) {
@@ -41,8 +44,9 @@ type cliOptions struct {
 	jsonOutput   bool
 	showHelp     bool
 	showVersion  bool
+	recursive    bool
 
-	file       string
+	files      []string
 	configArgs []string // remaining positional args when --config is active
 }
 
@@ -70,6 +74,8 @@ func parseFlags(args []string) (*cliOptions, error) {
 	fs.BoolVar(&opts.showVersion, "version", false, "Print version and exit")
 	fs.BoolVar(&opts.showHelp, "help", false, "Print help and exit")
 	fs.BoolVar(&opts.showHelp, "h", false, "Print help and exit (short)")
+	fs.BoolVar(&opts.recursive, "recursive", false, "Upload de diretórios de forma recursiva")
+	fs.BoolVar(&opts.recursive, "r", false, "Upload de diretórios de forma recursiva (short)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -79,28 +85,44 @@ func parseFlags(args []string) (*cliOptions, error) {
 		// --config mode: positional args are key/value for set/unset, not a file path.
 		opts.configArgs = rest
 	} else {
-		if len(rest) > 1 {
-			return nil, fmt.Errorf("usage: barfi [flags] <file>")
-		}
-		if len(rest) == 1 {
-			opts.file = rest[0]
-		}
+		opts.files = rest
 	}
 	return opts, nil
 }
 
 // resolveSettings merges config file, env vars, and CLI flags with the
 // precedence: config < env < flags.
-func resolveSettings(opts *cliOptions) (Config, error) {
+func resolveSettings(opts *cliOptions) (Config, MultiConfig, error) {
 	var cfg Config
+	var mCfg MultiConfig
 	path, err := defaultConfigPath()
 	if err == nil {
 		loaded, lerr := loadConfig(path)
 		if lerr != nil {
-			return cfg, lerr
+			return cfg, mCfg, lerr
 		}
-		cfg = loaded
+		mCfg = loaded
+		if mCfg.Profiles == nil {
+			mCfg.Profiles = make(map[string]Config)
+		}
+		cfg = mCfg.Profiles[mCfg.ActiveProfile]
+
+		// Auto-fix para usuários que colaram o ID da pasta na Location (Bucket)
+		if cfg.LocationId != "" && cfg.ParentId == "" {
+			cfg.ParentId = cfg.LocationId
+			cfg.LocationId = ""
+			mCfg.Profiles[mCfg.ActiveProfile] = cfg
+			_ = saveConfig(path, mCfg) // Salva a correção silenciosamente
+		}
+	} else {
+		mCfg = MultiConfig{
+			ActiveProfile: "Padrão",
+			Profiles: map[string]Config{
+				"Padrão": {},
+			},
+		}
 	}
+
 	if v := os.Getenv("BARFI_SERVER"); v != "" {
 		cfg.Server = v
 	}
@@ -128,29 +150,72 @@ func resolveSettings(opts *cliOptions) (Config, error) {
 	if cfg.Workers == 0 {
 		cfg.Workers = 5
 	}
-	return cfg, nil
+	return cfg, mCfg, nil
 }
 
 func printHelp() {
-	eprintln(`Usage: barfi [flags] <file>
+	eprintln(`Uso: barfi [flags] [arquivos...]
+	
+Se nenhum arquivo for passado, o menu interativo será aberto.
 
 Flags:
-  --server URL               BUS server base URL (env: BARFI_SERVER)
-  --token T                  Bearer token (env: BARFI_TOKEN)
-  -l, --location-id ID       Storage bucket id (env: BARFI_LOCATION_ID)
-  -d, --parent-id ID         Target directory id (requires --token)
-      --guest-upload-link-id Guest upload link id
-      --note TEXT            Optional note (≤500 chars, base64-encoded)
-      --part-size BYTES      Override auto part size (e.g. 25MB)
-  -j, --workers N             Parallel upload workers (default 5)
-      --save                 Persist resolved settings to config file
-      --config ACTION        Config management (show, set <key> <value>, unset <key>)
-  -q, --quiet                Suppress progress output
-      --json                 Print server response as JSON on completion
-  -h, --help                 Print help and exit
-      --version              Print version and exit
+  --server URL               URL base do servidor (env: BARFI_SERVER)
+  --token T                  Token de autorização (env: BARFI_TOKEN)
+  -l, --location-id ID       ID do bucket de armazenamento (env: BARFI_LOCATION_ID)
+  -d, --parent-id ID         ID do diretório de destino (requer --token)
+      --guest-upload-link-id ID do link de upload para convidado
+      --note TEXT            Nota opcional (≤500 caracteres)
+      --part-size BYTES      Substituir tamanho automático da parte (ex: 25MB)
+  -j, --workers N            Workers de upload paralelo (padrão 5)
+  -r, --recursive            Faz upload dos arquivos em subdiretórios
+      --save                 Salvar configurações resolvidas no arquivo de config
+      --config ACTION        Gerenciamento de config (show, set <chave> <valor>, unset <chave>)
+  -q, --quiet                Suprimir saída de progresso
+      --json                 Imprimir resposta do servidor em JSON ao concluir
+  -h, --help                 Imprimir ajuda e sair
+      --version              Imprimir versão e sair
 
-Config keys: server, token, locationId, parentId, workers`)
+Chaves de config: server, token, locationId, parentId, workers`)
+}
+
+func expandFiles(paths []string, recursive bool) ([]string, error) {
+	var expanded []string
+	for _, p := range paths {
+		info, err := os.Stat(p)
+		if err != nil {
+			return nil, fmt.Errorf("erro acessando %q: %w", p, err)
+		}
+		if !info.IsDir() {
+			expanded = append(expanded, p)
+			continue
+		}
+
+		if recursive {
+			err := filepath.WalkDir(p, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if !d.IsDir() {
+					expanded = append(expanded, path)
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, fmt.Errorf("erro percorrendo diretório %q: %w", p, err)
+			}
+		} else {
+			entries, err := os.ReadDir(p)
+			if err != nil {
+				return nil, fmt.Errorf("erro lendo diretório %q: %w", p, err)
+			}
+			for _, entry := range entries {
+				if !entry.IsDir() {
+					expanded = append(expanded, filepath.Join(p, entry.Name()))
+				}
+			}
+		}
+	}
+	return expanded, nil
 }
 
 func runCLI(args []string) int {
@@ -172,48 +237,52 @@ func runCLI(args []string) int {
 		return runConfig(opts.configAction, opts.configArgs)
 	}
 
-	cfg, err := resolveSettings(opts)
+	cfg, mCfg, err := resolveSettings(opts)
 	if err != nil {
 		eprintln("barfi:", err)
 		return 2
 	}
 
+	if len(opts.files) == 0 && !opts.save {
+		err := runInteractiveMode(opts, &mCfg, &cfg)
+		if err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				eprintln("barfi: operação cancelada pelo usuário")
+				return 130
+			}
+			eprintln("barfi: erro no modo interativo:", err)
+			return 2
+		}
+	} else if opts.note == "" {
+		// Caso não seja interativo e não tenha passado nota por flag, usa a do perfil
+		opts.note = cfg.DefaultNote
+	}
+
 	if opts.save {
+		mCfg.Profiles[mCfg.ActiveProfile] = cfg
 		path, perr := defaultConfigPath()
 		if perr != nil {
 			eprintln("barfi:", perr)
 			return 2
 		}
-		if err := saveConfig(path, cfg); err != nil {
+		if err := saveConfig(path, mCfg); err != nil {
 			eprintln("barfi:", err)
 			return 2
 		}
 		if cfg.Token != "" && !opts.quiet {
-			eprintf("barfi: wrote token to %s (mode 0600)\n", path)
+			eprintf("barfi: perfil %q atualizado em %s (modo 0600)\n", mCfg.ActiveProfile, path)
 		}
-		if opts.file == "" {
+		if len(opts.files) == 0 {
 			return 0
 		}
 	}
 
-	if opts.file == "" {
-		eprintln("barfi: no file argument (use --help for usage)")
+	if len(opts.files) == 0 {
+		eprintln("barfi: nenhum arquivo selecionado (use --help para ajuda)")
 		return 2
 	}
 	if cfg.Server == "" {
-		eprintln("barfi: --server not set (use a flag, BARFI_SERVER, or --save a config)")
-		return 2
-	}
-
-	f, err := os.Open(opts.file)
-	if err != nil {
-		eprintln("barfi:", err)
-		return 2
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		eprintln("barfi:", err)
+		eprintln("barfi: --server não configurado (use uma flag, variável de ambiente BARFI_SERVER, ou use o modo interativo)")
 		return 2
 	}
 
@@ -226,13 +295,13 @@ func runCLI(args []string) int {
 		}
 		if n < MinPartSize {
 			if !opts.quiet {
-				eprintf("barfi: --part-size %s below minimum, using %s\n", opts.partSizeStr, humanSize(MinPartSize))
+				eprintf("barfi: --part-size %s abaixo do mínimo, usando %s\n", opts.partSizeStr, humanSize(MinPartSize))
 			}
 			n = MinPartSize
 		}
 		if n > MaxPartSize {
 			if !opts.quiet {
-				eprintf("barfi: --part-size %s above maximum, using %s\n", opts.partSizeStr, humanSize(MaxPartSize))
+				eprintf("barfi: --part-size %s acima do máximo, usando %s\n", opts.partSizeStr, humanSize(MaxPartSize))
 			}
 			n = MaxPartSize
 		}
@@ -242,74 +311,168 @@ func runCLI(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	fileSize := st.Size()
-	fileName := filepathBase(opts.file)
-	server := strings.TrimRight(cfg.Server, "/")
-
-	effectivePartSize := partSize
-	if effectivePartSize == 0 {
-		effectivePartSize = calcPartSize(fileSize)
-	}
-	totalParts := (fileSize + effectivePartSize - 1) / effectivePartSize
-
-	if !opts.quiet {
-		eprintf("file:        %s (%s)\n", fileName, humanSize(fileSize))
-		eprintf("server:      %s\n", server)
-		eprintf("parts:       %d x %s\n", totalParts, humanSize(effectivePartSize))
-		eprintf("workers:     %d\n", cfg.Workers)
-		if opts.parentId != "" {
-			eprintf("directory:   %s\n", opts.parentId)
-		}
-		if opts.guestLink != "" {
-			eprintf("guest link:  %s\n", opts.guestLink)
-		}
-		if cfg.LocationId != "" {
-			eprintf("location:    %s\n", cfg.LocationId)
-		}
-	}
-
-	u := &Uploader{
-		file:        f,
-		fileSize:    fileSize,
-		fileName:    fileName,
-		server:      server,
-		token:       cfg.Token,
-		locationId:  cfg.LocationId,
-		parentId:    opts.parentId,
-		guestLinkId: opts.guestLink,
-		note:        opts.note,
-		partSize:    partSize,
-		workers:     cfg.Workers,
-		httpClient:  &http.Client{Timeout: 0},
-		progress:    newProgress(opts.quiet, fileName),
-	}
-
-	start := time.Now()
-	result, err := u.run(ctx)
+	filesToUpload, err := expandFiles(opts.files, opts.recursive)
 	if err != nil {
-		return formatError(err)
+		eprintln("barfi:", err)
+		return 2
 	}
 
-	if !opts.quiet {
-		elapsed := time.Since(start)
-		var avgSpeed string
-		if secs := elapsed.Seconds(); secs > 0 {
-			avgSpeed = humanSize(int64(float64(u.fileSize)/secs)) + "/s"
-		}
-		eprintf("uploaded %s (%s) in %s (%s)\n",
-			u.fileName, humanSize(u.fileSize), elapsed.Round(time.Second), avgSpeed)
+	if len(filesToUpload) == 0 {
+		eprintln("barfi: nenhum arquivo encontrado para upload.")
+		return 2
 	}
-	if opts.jsonOutput {
-		// Pretty-print the raw JSON from the server.
-		var buf bytes.Buffer
-		if err := json.Indent(&buf, result.rawJSON, "", "  "); err != nil {
-			fmt.Println(string(result.rawJSON)) // fall back to raw
+
+	type failedUpload struct {
+		path string
+		err  error
+	}
+	var failed []failedUpload
+	var successCount int
+
+	for len(filesToUpload) > 0 {
+		var retryFiles []string
+
+		for i, filePath := range filesToUpload {
+			if !opts.quiet {
+				if len(filesToUpload) > 1 {
+					eprintf("\n=== Fazendo upload de %d de %d: %s ===\n", i+1, len(filesToUpload), filePath)
+				}
+			}
+
+			f, err := os.Open(filePath)
+			if err != nil {
+				eprintf("barfi erro ao abrir %s: %v\n", filePath, err)
+				failed = append(failed, failedUpload{filePath, err})
+				continue
+			}
+
+			st, err := f.Stat()
+			if err != nil {
+				f.Close()
+				eprintf("barfi erro lendo status de %s: %v\n", filePath, err)
+				failed = append(failed, failedUpload{filePath, err})
+				continue
+			}
+
+			fileSize := st.Size()
+			fileName := filepathBase(filePath)
+			server := strings.TrimRight(cfg.Server, "/")
+
+			effectivePartSize := partSize
+			if effectivePartSize == 0 {
+				effectivePartSize = calcPartSize(fileSize)
+			}
+			totalParts := (fileSize + effectivePartSize - 1) / effectivePartSize
+
+			if !opts.quiet {
+				eprintf("arquivo:     %s (%s)\n", fileName, humanSize(fileSize))
+				eprintf("servidor:    %s\n", server)
+				eprintf("partes:      %d x %s\n", totalParts, humanSize(effectivePartSize))
+				eprintf("workers:     %d\n", cfg.Workers)
+				if cfg.ParentId != "" {
+					eprintf("diretório:   %s\n", cfg.ParentId)
+				}
+				if opts.guestLink != "" {
+					eprintf("link convid: %s\n", opts.guestLink)
+				}
+				if cfg.LocationId != "" {
+					eprintf("localização: %s\n", cfg.LocationId)
+				}
+			}
+
+			u := &Uploader{
+				file:        f,
+				fileSize:    fileSize,
+				fileName:    fileName,
+				server:      server,
+				token:       cfg.Token,
+				locationId:  cfg.LocationId,
+				parentId:    cfg.ParentId,
+				guestLinkId: opts.guestLink,
+				note:        opts.note,
+				partSize:    partSize,
+				workers:     cfg.Workers,
+				httpClient:  &http.Client{Timeout: 0},
+				progress:    newProgress(opts.quiet, fileName),
+			}
+
+			start := time.Now()
+			result, err := u.run(ctx)
+			f.Close()
+
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					eprintln("barfi: cancelado")
+					return 130
+				}
+
+				eprintf("barfi falha no envio de %s\n", fileName)
+				formatError(err)
+				failed = append(failed, failedUpload{filePath, err})
+				continue
+			}
+
+			successCount++
+			if !opts.quiet {
+				elapsed := time.Since(start)
+				var avgSpeed string
+				if secs := elapsed.Seconds(); secs > 0 {
+					avgSpeed = humanSize(int64(float64(u.fileSize)/secs)) + "/s"
+				}
+				eprintf("enviado %s (%s) em %s (%s)\n",
+					u.fileName, humanSize(u.fileSize), elapsed.Round(time.Second), avgSpeed)
+			}
+			if opts.jsonOutput {
+				var buf bytes.Buffer
+				if err := json.Indent(&buf, result.rawJSON, "", "  "); err != nil {
+					fmt.Println(string(result.rawJSON))
+				} else {
+					fmt.Println(buf.String())
+				}
+			} else {
+				fmt.Println(result.link)
+			}
+		}
+
+		if len(failed) > 0 {
+			eprintf("\nResumo do Lote:\n")
+			eprintf("  Sucesso: %d\n", successCount)
+			eprintf("  Falhas:  %d\n", len(failed))
+
+			for _, f := range failed {
+				eprintf("    - %s (%v)\n", f.path, f.err)
+			}
+
+			// Se estamos no TTY (ou foi via modo interativo), pergunta sobre retentativas.
+			// Verifica se pode usar modo interativo com isatty. No momento vamos assumir que pode usar huh
+			var retry bool
+			form := huh.NewForm(
+				huh.NewGroup(
+					huh.NewConfirm().
+						Title(fmt.Sprintf("Deseja tentar enviar novamente os %d arquivos que falharam?", len(failed))).
+						Value(&retry),
+				),
+			)
+			_ = form.Run()
+
+			if retry {
+				for _, f := range failed {
+					retryFiles = append(retryFiles, f.path)
+				}
+				failed = nil // reset falhas pra proxima rodada
+				filesToUpload = retryFiles
+				continue // tenta rodar novamente só os retryFiles
+			} else {
+				return 1 // Saída com erro indicando falhas no lote final
+			}
 		} else {
-			fmt.Println(buf.String())
+			if len(filesToUpload) > 1 {
+				eprintf("\nLote finalizado com sucesso! %d arquivos enviados.\n", successCount)
+			}
+			break
 		}
-	} else {
-		fmt.Println(result.link)
 	}
+
 	return 0
 }
 
@@ -322,12 +485,12 @@ func runConfig(action string, args []string) int {
 
 	switch action {
 	case "show":
-		cfg, err := loadConfig(path)
+		mCfg, err := loadConfig(path)
 		if err != nil {
 			eprintln("barfi:", err)
 			return 1
 		}
-		data, _ := json.MarshalIndent(cfg, "", "  ")
+		data, _ := json.MarshalIndent(mCfg, "", "  ")
 		fmt.Println(string(data))
 		return 0
 
@@ -336,16 +499,18 @@ func runConfig(action string, args []string) int {
 			eprintln("barfi: --config set requires <key> <value>")
 			return 2
 		}
-		cfg, err := loadConfig(path)
+		mCfg, err := loadConfig(path)
 		if err != nil {
 			eprintln("barfi:", err)
 			return 1
 		}
+		cfg := mCfg.Profiles[mCfg.ActiveProfile]
 		if err := setConfigField(&cfg, args[0], args[1]); err != nil {
 			eprintln("barfi:", err)
 			return 2
 		}
-		if err := saveConfig(path, cfg); err != nil {
+		mCfg.Profiles[mCfg.ActiveProfile] = cfg
+		if err := saveConfig(path, mCfg); err != nil {
 			eprintln("barfi:", err)
 			return 1
 		}
@@ -356,16 +521,18 @@ func runConfig(action string, args []string) int {
 			eprintln("barfi: --config unset requires <key>")
 			return 2
 		}
-		cfg, err := loadConfig(path)
+		mCfg, err := loadConfig(path)
 		if err != nil {
 			eprintln("barfi:", err)
 			return 1
 		}
+		cfg := mCfg.Profiles[mCfg.ActiveProfile]
 		if err := setConfigField(&cfg, args[0], ""); err != nil {
 			eprintln("barfi:", err)
 			return 2
 		}
-		if err := saveConfig(path, cfg); err != nil {
+		mCfg.Profiles[mCfg.ActiveProfile] = cfg
+		if err := saveConfig(path, mCfg); err != nil {
 			eprintln("barfi:", err)
 			return 1
 		}

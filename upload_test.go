@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -210,9 +209,9 @@ func TestInit_SendsExpectedBody(t *testing.T) {
 	if got := fb.initBody["locationId"]; got != "loc1" {
 		t.Errorf("locationId = %v, want loc1", got)
 	}
-	wantNote := base64.StdEncoding.EncodeToString([]byte("hello world"))
+	wantNote := "hello world"
 	if got, _ := fb.initBody["note"].(string); got != wantNote {
-		t.Errorf("note not base64-encoded: got %q want %q", got, wantNote)
+		t.Errorf("note not plain text: got %q want %q", got, wantNote)
 	}
 	if u.uploadId != fb.initToken {
 		t.Errorf("u.uploadId = %q, want %q", u.uploadId, fb.initToken)

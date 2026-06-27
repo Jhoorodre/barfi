@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -127,7 +126,7 @@ func (u *Uploader) init(ctx context.Context) error {
 		body["parentId"] = u.parentId
 	}
 	if u.note != "" {
-		body["note"] = base64.StdEncoding.EncodeToString([]byte(u.note))
+		body["note"] = u.note
 	}
 	buf, err := json.Marshal(body)
 	if err != nil {

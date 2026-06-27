@@ -9,20 +9,26 @@ import (
 	"path/filepath"
 )
 
-// Config is the on-disk shape of ~/.config/barfi/config.json.
-// Every field is optional. Fields with zero values are omitted when written
-// (via omitempty) so narrower --save invocations do not clobber previously
-// saved fields.
-type Config struct {
-	Server     string `json:"server,omitempty"`
-	Token      string `json:"token,omitempty"`
-	LocationId string `json:"locationId,omitempty"`
-	ParentId   string `json:"parentId,omitempty"`
-	Workers    int    `json:"workers,omitempty"`
+type BookmarkedFolder struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
-// defaultConfigPath returns the XDG-aware path for barfi's config file.
-// Uses os.UserConfigDir() which handles $XDG_CONFIG_HOME, macOS, and Windows.
+type Config struct {
+	Server      string             `json:"server,omitempty"`
+	Token       string             `json:"token,omitempty"`
+	LocationId  string             `json:"locationId,omitempty"`
+	ParentId    string             `json:"parentId,omitempty"`
+	Workers     int                `json:"workers,omitempty"`
+	DefaultNote string             `json:"defaultNote,omitempty"`
+	Folders     []BookmarkedFolder `json:"folders,omitempty"`
+}
+
+type MultiConfig struct {
+	ActiveProfile string            `json:"activeProfile,omitempty"`
+	Profiles      map[string]Config `json:"profiles,omitempty"`
+}
+
 func defaultConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -31,33 +37,58 @@ func defaultConfigPath() (string, error) {
 	return filepath.Join(dir, "barfi", "config.json"), nil
 }
 
-// loadConfig reads the config file at path. If the file does not exist,
-// loadConfig returns the zero-value Config and a nil error — missing is
-// not an error for this CLI.
-func loadConfig(path string) (Config, error) {
+func loadConfig(path string) (MultiConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return Config{}, nil
+			return MultiConfig{
+				ActiveProfile: "Padrão",
+				Profiles: map[string]Config{
+					"Padrão": {},
+				},
+			}, nil
 		}
-		return Config{}, fmt.Errorf("read %s: %w", path, err)
+		return MultiConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse %s: %w", path, err)
+
+	var mCfg MultiConfig
+	if err := json.Unmarshal(data, &mCfg); err != nil {
+		return MultiConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return cfg, nil
+
+	// Migration logic: If it looks like an old flat config, migrate it to Padrão
+	var oldCfg Config
+	_ = json.Unmarshal(data, &oldCfg)
+
+	migrated := false
+	if len(mCfg.Profiles) == 0 {
+		mCfg.Profiles = make(map[string]Config)
+		if oldCfg.Server != "" || oldCfg.Token != "" || oldCfg.Workers != 0 || oldCfg.LocationId != "" || oldCfg.ParentId != "" {
+			mCfg.Profiles["Padrão"] = oldCfg
+		} else {
+			mCfg.Profiles["Padrão"] = Config{}
+		}
+		mCfg.ActiveProfile = "Padrão"
+		migrated = true
+	}
+
+	if mCfg.ActiveProfile == "" {
+		mCfg.ActiveProfile = "Padrão"
+	}
+
+	if migrated {
+		_ = saveConfig(path, mCfg)
+	}
+
+	return mCfg, nil
 }
 
-// saveConfig writes cfg to path with 0600 permissions, creating the
-// parent directory with 0700 if it does not exist. The token is
-// sensitive, hence the restrictive mode.
-func saveConfig(path string, cfg Config) error {
+func saveConfig(path string, mCfg MultiConfig) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(mCfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}

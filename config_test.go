@@ -9,26 +9,34 @@ import (
 
 func TestLoadConfig_Missing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nonexistent.json")
-	cfg, err := loadConfig(path)
+	mCfg, err := loadConfig(path)
 	if err != nil {
 		t.Fatalf("expected no error for missing file, got %v", err)
 	}
-	if cfg != (Config{}) {
-		t.Fatalf("expected zero-value Config, got %+v", cfg)
+	if mCfg.ActiveProfile != "Padrão" {
+		t.Fatalf("expected active profile to be Padrão, got %s", mCfg.ActiveProfile)
+	}
+	if _, exists := mCfg.Profiles["Padrão"]; !exists {
+		t.Fatalf("expected Padrão profile to exist")
 	}
 }
 
 func TestSaveConfig_CreatesDirAndFile(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "barfi")
 	path := filepath.Join(dir, "config.json")
-	cfg := Config{
-		Server:     "https://bus.example.com",
-		Token:      "tok",
-		LocationId: "loc",
-		ParentId:   "par",
-		Workers:    5,
+	mCfg := MultiConfig{
+		ActiveProfile: "Padrão",
+		Profiles: map[string]Config{
+			"Padrão": {
+				Server:     "https://bus.example.com",
+				Token:      "tok",
+				LocationId: "loc",
+				ParentId:   "par",
+				Workers:    5,
+			},
+		},
 	}
-	if err := saveConfig(path, cfg); err != nil {
+	if err := saveConfig(path, mCfg); err != nil {
 		t.Fatalf("saveConfig: %v", err)
 	}
 	di, err := os.Stat(dir)
@@ -49,16 +57,22 @@ func TestSaveConfig_CreatesDirAndFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfig: %v", err)
 	}
-	if loaded != cfg {
-		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", loaded, cfg)
+	gotP, wantP := loaded.Profiles["Padrão"], mCfg.Profiles["Padrão"]
+	if loaded.ActiveProfile != mCfg.ActiveProfile || gotP.Server != wantP.Server || gotP.Token != wantP.Token || gotP.Workers != wantP.Workers {
+		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", loaded, mCfg)
 	}
 }
 
 func TestSaveConfig_OmitEmpty(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "barfi")
 	path := filepath.Join(dir, "config.json")
-	cfg := Config{Server: "https://bus.example.com"}
-	if err := saveConfig(path, cfg); err != nil {
+	mCfg := MultiConfig{
+		ActiveProfile: "Padrão",
+		Profiles: map[string]Config{
+			"Padrão": {Server: "https://bus.example.com"},
+		},
+	}
+	if err := saveConfig(path, mCfg); err != nil {
 		t.Fatalf("saveConfig: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -74,38 +88,42 @@ func TestSaveConfig_OmitEmpty(t *testing.T) {
 }
 
 func TestSaveConfig_PreservesExistingFieldsViaResolve(t *testing.T) {
-	// Simulates: existing config with server+token, user runs
-	// `barfi --save --parent-id abc`. Expected: all three persist afterward.
 	dir := filepath.Join(t.TempDir(), "barfi")
 	path := filepath.Join(dir, "config.json")
 
-	// 1. Seed the file with an existing server+token.
-	if err := saveConfig(path, Config{Server: "https://a", Token: "tok"}); err != nil {
+	mCfg := MultiConfig{
+		ActiveProfile: "Padrão",
+		Profiles: map[string]Config{
+			"Padrão": {Server: "https://a", Token: "tok"},
+		},
+	}
+	if err := saveConfig(path, mCfg); err != nil {
 		t.Fatal(err)
 	}
 
-	// 2. Load, merge flag override, save again.
 	loaded, err := loadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	loaded.ParentId = "abc"
+	cfg := loaded.Profiles["Padrão"]
+	cfg.ParentId = "abc"
+	loaded.Profiles["Padrão"] = cfg
 	if err := saveConfig(path, loaded); err != nil {
 		t.Fatal(err)
 	}
 
-	// 3. Verify all three fields are present.
 	final, err := loadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if final.Server != "https://a" {
-		t.Errorf("Server = %q, want %q", final.Server, "https://a")
+	finalCfg := final.Profiles["Padrão"]
+	if finalCfg.Server != "https://a" {
+		t.Errorf("Server = %q, want %q", finalCfg.Server, "https://a")
 	}
-	if final.Token != "tok" {
-		t.Errorf("Token = %q, want %q", final.Token, "tok")
+	if finalCfg.Token != "tok" {
+		t.Errorf("Token = %q, want %q", finalCfg.Token, "tok")
 	}
-	if final.ParentId != "abc" {
-		t.Errorf("ParentId = %q, want %q", final.ParentId, "abc")
+	if finalCfg.ParentId != "abc" {
+		t.Errorf("ParentId = %q, want %q", finalCfg.ParentId, "abc")
 	}
 }
