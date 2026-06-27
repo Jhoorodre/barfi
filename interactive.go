@@ -1130,6 +1130,7 @@ func obraUpload(cliOpts *cliOptions, cfg *Config, obra LibraryItem) error {
 			return huh.ErrUserAborted
 		}
 		if len(selected) == 0 {
+			eprintln("barfi: nenhum item selecionado")
 			return huh.ErrUserAborted
 		}
 		selectedPaths = selected
@@ -1365,6 +1366,8 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 					id, err := pickFolder(server, cfg.Token, "Destino de '"+cfg.Library[idx].Name+"'", "")
 					if err == nil {
 						cfg.Library[idx].FolderID = id
+					} else if !errors.Is(err, huh.ErrUserAborted) {
+						eprintln("barfi:", err)
 					}
 				case "default":
 					cfg.Library[idx].FolderID = cfg.ParentId
