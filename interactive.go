@@ -766,10 +766,31 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 				)).Run(); err != nil || !confirm {
 					continue
 				}
+				deletedSet := make(map[string]bool, len(selectedIDs))
 				for _, id := range selectedIDs {
 					if err := deleteDirectory(server, cfg.Token, id); err != nil {
 						eprintln("barfi:", err)
+					} else {
+						deletedSet[id] = true
 					}
+				}
+				if len(deletedSet) > 0 {
+					if deletedSet[cfg.ParentId] {
+						cfg.ParentId = ""
+					}
+					kept := cfg.Folders[:0:0]
+					for _, f := range cfg.Folders {
+						if !deletedSet[f.ID] {
+							kept = append(kept, f)
+						}
+					}
+					cfg.Folders = kept
+					for i := range cfg.Library {
+						if deletedSet[cfg.Library[i].FolderID] {
+							cfg.Library[i].FolderID = ""
+						}
+					}
+					saveAndReloadCfg(mCfg, cfg)
 				}
 			}
 			if newItems, _, err := listDirectory(server, cfg.Token, path[len(path)-1].id); err == nil {
@@ -1547,7 +1568,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 			var note string = cfg.DefaultNote
 			extraFields = append(extraFields, huh.NewInput().
 				Title("Nota (Opcional)").
-				Description("Máximo 500 caracteres. Em branco usa a nota padrão do perfil.").
+				Description("Pré-preenchida com a nota padrão. Apague para enviar sem nota.").
 				Value(&note),
 			)
 			if err := huh.NewForm(huh.NewGroup(extraFields...)).Run(); err != nil {
