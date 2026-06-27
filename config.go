@@ -14,14 +14,22 @@ type BookmarkedFolder struct {
 	Name string `json:"name"`
 }
 
+type LibraryItem struct {
+	Name      string `json:"name"`
+	LocalPath string `json:"localPath,omitempty"`
+	FolderID  string `json:"folderId,omitempty"`
+}
+
 type Config struct {
-	Server      string             `json:"server,omitempty"`
-	Token       string             `json:"token,omitempty"`
-	LocationId  string             `json:"locationId,omitempty"`
-	ParentId    string             `json:"parentId,omitempty"`
-	Workers     int                `json:"workers,omitempty"`
-	DefaultNote string             `json:"defaultNote,omitempty"`
-	Folders     []BookmarkedFolder `json:"folders,omitempty"`
+	Server          string             `json:"server,omitempty"`
+	Token           string             `json:"token,omitempty"`
+	LocationId      string             `json:"locationId,omitempty"`
+	ParentId        string             `json:"parentId,omitempty"`
+	Workers         int                `json:"workers,omitempty"`
+	DefaultNote     string             `json:"defaultNote,omitempty"`
+	Folders         []BookmarkedFolder `json:"folders,omitempty"`
+	Library         []LibraryItem      `json:"library,omitempty"`
+	LibraryBasePath string             `json:"libraryBasePath,omitempty"`
 }
 
 type MultiConfig struct {

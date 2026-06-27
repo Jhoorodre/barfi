@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -98,6 +99,7 @@ func manageProfilesInteractive(mCfg *MultiConfig, cfg *Config) error {
 			var token string = cfg.Token
 			var locationId string = cfg.LocationId
 			var parentId string = cfg.ParentId
+			var libraryBasePath string = cfg.LibraryBasePath
 			var defaultNote string = cfg.DefaultNote
 			var workersStr string
 
@@ -110,19 +112,53 @@ func manageProfilesInteractive(mCfg *MultiConfig, cfg *Config) error {
 				workersStr = "5"
 			}
 
+			var locationField huh.Field
+			if token != "" {
+				if locs, err := listLocations(strings.TrimRight(server, "/"), token); err == nil && len(locs) > 0 {
+					locOpts := []huh.Option[string]{huh.NewOption("Padrão (automático)", "")}
+					for _, l := range locs {
+						locOpts = append(locOpts, huh.NewOption(l.Name, l.ID))
+					}
+					locationField = huh.NewSelect[string]().
+						Title("Bucket de Armazenamento").
+						Description("Servidor onde os arquivos serão gravados.").
+						Options(locOpts...).
+						Value(&locationId)
+				}
+			}
+			if locationField == nil {
+				locationField = huh.NewInput().
+					Title("ID do Bucket de Armazenamento / Location (Opcional)").
+					Description("ID do servidor de armazenamento. Deixe vazio para usar o padrão.").
+					Value(&locationId)
+			}
+
 			editForm := huh.NewForm(
 				huh.NewGroup(
-					huh.NewInput().Title("Endereço do Servidor").Value(&server).Validate(func(str string) error {
+					huh.NewInput().Title("Endereço do Servidor").
+						Description("URL base da API. Ex: https://buzzheavier.com").
+						Value(&server).Validate(func(str string) error {
 						if str == "" {
 							return errors.New("O servidor não pode ser vazio")
 						}
 						return nil
 					}),
-					huh.NewInput().Title("Token (Opcional)").Value(&token),
-					huh.NewInput().Title("ID do Bucket de Armazenamento / Location (Opcional)").Value(&locationId),
-					huh.NewInput().Title("ID da Pasta de Destino / Parent (Opcional)").Value(&parentId),
-					huh.NewInput().Title("Nota Padrão (Opcional)").Value(&defaultNote),
-					huh.NewInput().Title("Workers").Value(&workersStr).Validate(func(str string) error {
+					huh.NewInput().Title("Token (Opcional)").
+						Description("Seu token de autenticação. Necessário para salvar em pasta e usar favoritos.").
+						Value(&token),
+					locationField,
+					huh.NewInput().Title("ID da Pasta de Destino / Parent (Opcional)").
+						Description("ID da pasta onde os uploads serão salvos. Pode ser definido pelo navegador de pastas.").
+						Value(&parentId),
+					huh.NewInput().Title("Caminho Base da Biblioteca (Opcional)").
+						Description("Pasta raiz onde ficam as obras. Subpastas viram entradas na biblioteca. Aceita Windows e WSL.").
+						Value(&libraryBasePath),
+					huh.NewInput().Title("Nota Padrão (Opcional)").
+						Description("Texto exibido abaixo do link de download. Máximo 500 caracteres.").
+						Value(&defaultNote),
+					huh.NewInput().Title("Workers").
+						Description("Quantidade de partes enviadas em paralelo. Padrão: 5.").
+						Value(&workersStr).Validate(func(str string) error {
 						if str == "" {
 							return nil
 						}
@@ -141,6 +177,7 @@ func manageProfilesInteractive(mCfg *MultiConfig, cfg *Config) error {
 			cfg.Token = token
 			cfg.LocationId = locationId
 			cfg.ParentId = parentId
+			cfg.LibraryBasePath = normalizePath(libraryBasePath)
 			cfg.DefaultNote = defaultNote
 			if workersStr != "" {
 				w, _ := strconv.Atoi(workersStr)
@@ -337,6 +374,57 @@ func moveItem(server, token, itemID, newParentID string) error {
 	return nil
 }
 
+type location struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func listLocations(server, token string) ([]location, error) {
+	req, err := http.NewRequest(http.MethodGet, server+"/api/locations", nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("locations: %s", readServerMessage(resp))
+	}
+	var parsed struct {
+		Data []location `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Data, nil
+}
+
+func editFileNote(server, token, fileID, note string) error {
+	body, _ := json.Marshal(map[string]string{"note": note})
+	req, err := http.NewRequest(http.MethodPut, server+"/api/fs/"+fileID, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("editar nota: %s", readServerMessage(resp))
+	}
+	return nil
+}
+
 func pickFolder(server, token, title, excludeID string) (string, error) {
 	type crumb struct{ id, name string }
 
@@ -358,6 +446,7 @@ func pickFolder(server, token, title, excludeID string) (string, error) {
 		if len(path) > 1 {
 			opts = append(opts, huh.NewOption("<< Voltar", "__back__"))
 		}
+		opts = append(opts, huh.NewOption("← Voltar ao menu", "__cancel__"))
 		if path[len(path)-1].id != excludeID {
 			opts = append(opts, huh.NewOption("Mover para aqui: "+pathStr, "__select__"))
 		}
@@ -378,6 +467,8 @@ func pickFolder(server, token, title, excludeID string) (string, error) {
 		}
 
 		switch action {
+		case "__cancel__":
+			return "", huh.ErrUserAborted
 		case "__back__":
 			path = path[:len(path)-1]
 			newItems, _, err := listDirectory(server, token, path[len(path)-1].id)
@@ -433,8 +524,9 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 			opts = append(opts, huh.NewOption("Renomear esta pasta", "__rename__"))
 			opts = append(opts, huh.NewOption("Mover esta pasta", "__move_dir__"))
 			opts = append(opts, huh.NewOption("Excluir esta pasta", "__delete__"))
+			opts = append(opts, huh.NewOption("Selecionar como destino: "+pathStr, "__select__"))
 		}
-		opts = append(opts, huh.NewOption("Selecionar como destino: "+pathStr, "__select__"))
+		opts = append(opts, huh.NewOption("← Voltar ao menu", "__exit__"))
 		opts = append(opts, huh.NewOption("+ Nova pasta aqui", "__create__"))
 		isFav := false
 		for _, f := range cfg.Folders {
@@ -467,6 +559,8 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 		}
 
 		switch action {
+		case "__exit__":
+			return nil
 		case "__back__":
 			path = path[:len(path)-1]
 			newItems, _, err := listDirectory(server, cfg.Token, path[len(path)-1].id)
@@ -623,6 +717,8 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 								Options(
 									huh.NewOption("Renomear", "rename"),
 									huh.NewOption("Mover", "move"),
+									huh.NewOption("Editar nota", "note"),
+									huh.NewOption("Excluir", "delete"),
 								).
 								Value(&fileAction),
 						)).Run(); err != nil {
@@ -658,6 +754,32 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 								eprintln("barfi:", err)
 							} else if newItems, _, rerr := listDirectory(server, cfg.Token, path[len(path)-1].id); rerr == nil {
 								currentItems = newItems
+							}
+						case "note":
+							var note string
+							if err := huh.NewForm(huh.NewGroup(
+								huh.NewInput().Title("Nota para '" + item.Name + "'").
+									Description("Exibida abaixo do link de download. Deixe vazio para remover.").
+									Value(&note),
+							)).Run(); err != nil {
+								break
+							}
+							if err := editFileNote(server, cfg.Token, item.ID, note); err != nil {
+								eprintln("barfi:", err)
+							}
+						case "delete":
+							var confirm bool
+							if err := huh.NewForm(huh.NewGroup(
+								huh.NewConfirm().Title("Excluir '" + item.Name + "'?").Value(&confirm),
+							)).Run(); err != nil {
+								break
+							}
+							if confirm {
+								if err := deleteDirectory(server, cfg.Token, item.ID); err != nil {
+									eprintln("barfi:", err)
+								} else if newItems, _, rerr := listDirectory(server, cfg.Token, path[len(path)-1].id); rerr == nil {
+									currentItems = newItems
+								}
 							}
 						}
 					}
@@ -727,6 +849,313 @@ func pickUploadFolder(cfg *Config, mCfg *MultiConfig) (string, error) {
 	}
 }
 
+func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
+	if cfg.Token == "" {
+		eprintln("barfi: token obrigatório para sincronizar biblioteca")
+		return nil
+	}
+	basePath := normalizePath(cfg.LibraryBasePath)
+	if basePath == "" {
+		eprintln("barfi: caminho base da biblioteca não configurado (edite o perfil)")
+		return nil
+	}
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return fmt.Errorf("ler caminho base: %w", err)
+	}
+
+	existing := make(map[string]bool)
+	for _, item := range cfg.Library {
+		existing[item.Name] = true
+	}
+
+	var toAdd []string
+	for _, e := range entries {
+		if e.IsDir() && !existing[e.Name()] {
+			toAdd = append(toAdd, e.Name())
+		}
+	}
+
+	if len(toAdd) == 0 {
+		eprintln("barfi: nenhuma obra nova encontrada em", basePath)
+		return nil
+	}
+
+	var confirm bool
+	preview := strings.Join(toAdd, "\n  ")
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title(fmt.Sprintf("%d nova(s) obra(s) encontrada(s)", len(toAdd))).
+			Description("Serão criadas no buzzheavier e adicionadas à biblioteca:\n  " + preview).
+			Value(&confirm),
+	)).Run(); err != nil {
+		return err
+	}
+	if !confirm {
+		return nil
+	}
+
+	server := strings.TrimRight(cfg.Server, "/")
+	parentID := cfg.ParentId
+	if parentID == "" {
+		_, rootID, err := listDirectory(server, cfg.Token, "")
+		if err != nil {
+			return fmt.Errorf("buscar raiz: %w", err)
+		}
+		parentID = rootID
+	}
+
+	for _, name := range toAdd {
+		folderID, err := createDirectory(server, cfg.Token, parentID, name)
+		if err != nil {
+			eprintln("barfi: criar pasta '"+name+"':", err)
+			continue
+		}
+		cfg.Library = append(cfg.Library, LibraryItem{
+			Name:      name,
+			LocalPath: filepath.Join(basePath, name),
+			FolderID:  folderID,
+		})
+		eprintf("barfi: ✓ %s\n", name)
+	}
+	saveAndReloadCfg(mCfg, cfg)
+	return nil
+}
+
+func changeLibraryBasePath(cfg *Config, mCfg *MultiConfig) error {
+	var newBase string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Novo caminho base da biblioteca").
+			Description("Atual: " + cfg.LibraryBasePath).
+			Value(&newBase).Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("caminho não pode ser vazio")
+			}
+			return nil
+		}),
+	)).Run(); err != nil {
+		return err
+	}
+	newBase = normalizePath(newBase)
+
+	var moveFiles bool
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Mover pastas físicas no disco?").
+			Description("Se sim, cada pasta local será movida do caminho antigo para o novo.").
+			Value(&moveFiles),
+	)).Run(); err != nil {
+		return err
+	}
+
+	oldBase := cfg.LibraryBasePath
+	if oldBase != "" {
+		for i, item := range cfg.Library {
+			if item.LocalPath == "" {
+				continue
+			}
+			rel, err := filepath.Rel(oldBase, item.LocalPath)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				continue // não é subpasta do oldBase, não toca
+			}
+			newPath := filepath.Join(newBase, rel)
+			if moveFiles {
+				if err := os.Rename(item.LocalPath, newPath); err != nil {
+					eprintln("barfi: mover '"+item.Name+"':", err)
+					continue
+				}
+			}
+			cfg.Library[i].LocalPath = newPath
+		}
+	}
+	cfg.LibraryBasePath = newBase
+	saveAndReloadCfg(mCfg, cfg)
+	return nil
+}
+
+func manageLibrary(cfg *Config, mCfg *MultiConfig) error {
+	for {
+		var opts []huh.Option[string]
+		for i, item := range cfg.Library {
+			opts = append(opts, huh.NewOption("[obra] "+item.Name, fmt.Sprintf("lib:%d", i)))
+		}
+		for i, f := range cfg.Folders {
+			opts = append(opts, huh.NewOption("[favorito] "+f.Name, fmt.Sprintf("fav:%d", i)))
+		}
+		opts = append(opts, huh.NewOption("+ Adicionar obra à biblioteca", "__add__"))
+		opts = append(opts, huh.NewOption("⟳ Sincronizar com disco", "__sync__"))
+		opts = append(opts, huh.NewOption("↪ Definir/Mudar caminho base", "__rebase__"))
+		opts = append(opts, huh.NewOption("← Voltar", "__back__"))
+
+		var action string
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Biblioteca (Perfil: " + mCfg.ActiveProfile + ")").
+				Options(opts...).
+				Value(&action),
+		)).Run(); err != nil {
+			return err
+		}
+
+		if action == "__back__" {
+			return nil
+		}
+		if action == "__sync__" {
+			if err := syncLibrary(cfg, mCfg); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+				eprintln("barfi:", err)
+			}
+			continue
+		}
+		if action == "__rebase__" {
+			if err := changeLibraryBasePath(cfg, mCfg); err != nil && !errors.Is(err, huh.ErrUserAborted) {
+				eprintln("barfi:", err)
+			}
+			continue
+		}
+
+		switch {
+		case action == "__add__":
+			item := LibraryItem{}
+			var folderChoice string
+			addForm := huh.NewForm(huh.NewGroup(
+				huh.NewInput().Title("Nome da obra").
+					Description("Nome que aparecerá na lista.").
+					Value(&item.Name).Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return errors.New("nome não pode ser vazio")
+					}
+					return nil
+				}),
+				huh.NewInput().Title("Caminho local (Opcional)").
+					Description("Pasta no HD onde ficam os arquivos. Aceita caminhos Windows e WSL.").
+					Value(&item.LocalPath),
+				huh.NewSelect[string]().Title("Pasta de destino no servidor").
+					Options(
+						huh.NewOption("Escolher pelo navegador de pastas", "browse"),
+						huh.NewOption("Usar pasta padrão do perfil", "default"),
+						huh.NewOption("Nenhuma (definir depois)", "none"),
+					).Value(&folderChoice),
+			))
+			if err := addForm.Run(); err != nil {
+				if !errors.Is(err, huh.ErrUserAborted) {
+					return err
+				}
+				continue
+			}
+			item.LocalPath = normalizePath(item.LocalPath)
+			if folderChoice == "browse" {
+				server := strings.TrimRight(cfg.Server, "/")
+				id, err := pickFolder(server, cfg.Token, "Destino de '"+item.Name+"'", "")
+				if err == nil {
+					item.FolderID = id
+				} else if !errors.Is(err, huh.ErrUserAborted) {
+					eprintln("barfi:", err)
+				}
+				// ponytail: cancela o navegador mas salva a obra sem pasta (editável depois)
+			} else if folderChoice == "default" {
+				item.FolderID = cfg.ParentId
+			}
+			cfg.Library = append(cfg.Library, item)
+			saveAndReloadCfg(mCfg, cfg)
+
+		case strings.HasPrefix(action, "fav:"):
+			idx, err := strconv.Atoi(action[4:])
+			if err != nil || idx >= len(cfg.Folders) {
+				continue
+			}
+			fav := cfg.Folders[idx]
+			var favAction string
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().Title("[favorito] "+fav.Name).
+					Options(
+						huh.NewOption("Remover dos favoritos", "remove"),
+						huh.NewOption("← Voltar", "back"),
+					).Value(&favAction),
+			)).Run(); err != nil {
+				continue
+			}
+			if favAction == "remove" {
+				cfg.Folders = append(cfg.Folders[:idx], cfg.Folders[idx+1:]...)
+				saveAndReloadCfg(mCfg, cfg)
+			}
+
+		case strings.HasPrefix(action, "lib:"):
+			idx, err := strconv.Atoi(action[4:])
+			if err != nil || idx >= len(cfg.Library) {
+				continue
+			}
+			item := cfg.Library[idx]
+			var libAction string
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().Title("[obra] "+item.Name).
+					Options(
+						huh.NewOption("Editar", "edit"),
+						huh.NewOption("Excluir", "delete"),
+						huh.NewOption("← Voltar", "back"),
+					).Value(&libAction),
+			)).Run(); err != nil {
+				continue
+			}
+			if libAction == "back" {
+				continue
+			}
+			switch libAction {
+			case "edit":
+				folderLabel := "Nenhuma"
+				if cfg.Library[idx].FolderID != "" {
+					folderLabel = cfg.Library[idx].FolderID
+				}
+				var folderChoice string
+				editForm := huh.NewForm(huh.NewGroup(
+					huh.NewInput().Title("Nome da obra").Value(&cfg.Library[idx].Name).Validate(func(s string) error {
+						if strings.TrimSpace(s) == "" {
+							return errors.New("nome não pode ser vazio")
+						}
+						return nil
+					}),
+					huh.NewInput().Title("Caminho local (Opcional)").Value(&cfg.Library[idx].LocalPath),
+					huh.NewSelect[string]().Title("Pasta de destino (atual: "+folderLabel+")").
+						Options(
+							huh.NewOption("Manter atual", "keep"),
+							huh.NewOption("Escolher pelo navegador", "browse"),
+							huh.NewOption("Usar pasta padrão do perfil", "default"),
+							huh.NewOption("Limpar", "none"),
+						).Value(&folderChoice),
+				))
+				if err := editForm.Run(); err != nil {
+					continue
+				}
+				cfg.Library[idx].LocalPath = normalizePath(cfg.Library[idx].LocalPath)
+				switch folderChoice {
+				case "browse":
+					server := strings.TrimRight(cfg.Server, "/")
+					id, err := pickFolder(server, cfg.Token, "Destino de '"+cfg.Library[idx].Name+"'", "")
+					if err == nil {
+						cfg.Library[idx].FolderID = id
+					}
+				case "default":
+					cfg.Library[idx].FolderID = cfg.ParentId
+				case "none":
+					cfg.Library[idx].FolderID = ""
+				}
+				saveAndReloadCfg(mCfg, cfg)
+			case "delete":
+				var confirm bool
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewConfirm().Title("Remover '" + cfg.Library[idx].Name + "' da biblioteca?").
+						Description("Não exclui nada no servidor.").Value(&confirm),
+				)).Run(); err != nil {
+					continue
+				}
+				if confirm {
+					cfg.Library = append(cfg.Library[:idx], cfg.Library[idx+1:]...)
+					saveAndReloadCfg(mCfg, cfg)
+				}
+			}
+		}
+	}
+}
+
 func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error {
 	for {
 		var action string
@@ -736,6 +1165,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 					Title("Menu Principal do Barfi (Perfil atual: "+mCfg.ActiveProfile+")").
 					Options(
 						huh.NewOption("Fazer Upload", "upload"),
+						huh.NewOption("Gerenciar Biblioteca", "library"),
 						huh.NewOption("Gerenciar Pasta Destino", "folders"),
 						huh.NewOption("Gerenciar Perfis", "profiles"),
 						huh.NewOption("Sair", "exit"),
@@ -755,6 +1185,15 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 			if err := manageProfilesInteractive(mCfg, cfg); err != nil {
 				if !errors.Is(err, huh.ErrUserAborted) {
 					return err
+				}
+			}
+			continue
+		}
+
+		if action == "library" {
+			if err := manageLibrary(cfg, mCfg); err != nil {
+				if !errors.Is(err, huh.ErrUserAborted) {
+					eprintln("barfi: erro na biblioteca:", err)
 				}
 			}
 			continue
@@ -835,7 +1274,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 				}
 			}
 
-			if cfg.Token != "" && len(cfg.Folders) > 0 {
+			if cfg.Token != "" {
 				folderID, err := pickUploadFolder(cfg, mCfg)
 				if err != nil {
 					if errors.Is(err, huh.ErrUserAborted) {
