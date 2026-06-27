@@ -633,6 +633,11 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 				}
 			}
 			cfg.Folders = kept
+			for i := range cfg.Library {
+				if cfg.Library[i].FolderID == deletedID {
+					cfg.Library[i].FolderID = ""
+				}
+			}
 			saveAndReloadCfg(mCfg, cfg)
 			path = path[:len(path)-1]
 			newItems, _, err := listDirectory(server, cfg.Token, path[len(path)-1].id)
@@ -751,6 +756,17 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 					}
 					continue
 				}
+				selfMove := false
+				for _, id := range selectedIDs {
+					if id == destID {
+						selfMove = true
+						break
+					}
+				}
+				if selfMove {
+					eprintln("barfi: destino não pode ser um dos itens selecionados")
+					continue
+				}
 				for _, id := range selectedIDs {
 					if err := moveItem(server, cfg.Token, id, destID); err != nil {
 						eprintln("barfi:", err)
@@ -763,7 +779,13 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 						Title(fmt.Sprintf("Excluir %d item(s)?", len(selectedIDs))).
 						Description("Pastas serão excluídas com todo o seu conteúdo.").
 						Value(&confirm),
-				)).Run(); err != nil || !confirm {
+				)).Run(); err != nil {
+					if !errors.Is(err, huh.ErrUserAborted) {
+						eprintln("barfi:", err)
+					}
+					continue
+				}
+				if !confirm {
 					continue
 				}
 				deletedSet := make(map[string]bool, len(selectedIDs))
@@ -1091,15 +1113,20 @@ func changeLibraryBasePath(cfg *Config, mCfg *MultiConfig) error {
 }
 
 // obraUpload populates opts for uploading from a library obra.
+// cachedEntries may be pre-read (e.g. from a content preview); pass nil to read fresh.
 // Returns nil with opts.files set on success, huh.ErrUserAborted if cancelled.
-func obraUpload(cliOpts *cliOptions, cfg *Config, obra LibraryItem) error {
+func obraUpload(cliOpts *cliOptions, cfg *Config, obra LibraryItem, cachedEntries []os.DirEntry) error {
 	if obra.LocalPath == "" {
 		eprintln("barfi: obra sem caminho local configurado")
 		return huh.ErrUserAborted
 	}
-	entries, err := os.ReadDir(obra.LocalPath)
-	if err != nil {
-		return fmt.Errorf("ler pasta da obra: %w", err)
+	entries := cachedEntries
+	if entries == nil {
+		var err error
+		entries, err = os.ReadDir(obra.LocalPath)
+		if err != nil {
+			return fmt.Errorf("ler pasta da obra: %w", err)
+		}
 	}
 	if len(entries) == 0 {
 		eprintln("barfi: pasta da obra está vazia:", obra.LocalPath)
@@ -1294,15 +1321,23 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			// Monta preview de conteúdo local e buzzheavier
 			server := strings.TrimRight(cfg.Server, "/")
 			var contentLines []string
+			var localEntries []os.DirEntry // reutilizado em obraUpload para evitar leitura dupla
 			if item.LocalPath != "" {
 				contentLines = append(contentLines, "📁 Local ("+item.LocalPath+"):")
 				if entries, err := os.ReadDir(item.LocalPath); err == nil {
+					localEntries = entries
+					shown := 0
 					for _, e := range entries {
+						if shown >= 15 {
+							contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", len(entries)-15))
+							break
+						}
 						prefix := "  [arquivo] "
 						if e.IsDir() {
 							prefix = "  [pasta]  "
 						}
 						contentLines = append(contentLines, prefix+e.Name())
+						shown++
 					}
 				} else {
 					contentLines = append(contentLines, "  (erro lendo pasta: "+err.Error()+")")
@@ -1311,12 +1346,18 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			if item.FolderID != "" && cfg.Token != "" {
 				contentLines = append(contentLines, "☁ Buzzheavier:")
 				if buzzItems, _, err := listDirectory(server, cfg.Token, item.FolderID); err == nil {
+					shown := 0
 					for _, bi := range buzzItems {
+						if shown >= 15 {
+							contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", len(buzzItems)-15))
+							break
+						}
 						prefix := "  [arquivo] "
 						if bi.IsDirectory {
 							prefix = "  [pasta]  "
 						}
 						contentLines = append(contentLines, prefix+bi.Name)
+						shown++
 					}
 				} else {
 					contentLines = append(contentLines, "  (erro: "+err.Error()+")")
@@ -1343,7 +1384,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			}
 			switch libAction {
 			case "upload":
-				if err := obraUpload(cliOpts, cfg, cfg.Library[idx]); err != nil {
+				if err := obraUpload(cliOpts, cfg, cfg.Library[idx], localEntries); err != nil {
 					if !errors.Is(err, huh.ErrUserAborted) {
 						eprintln("barfi:", err)
 					}
@@ -1515,7 +1556,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 				if err != nil || obraIdx >= len(cfg.Library) {
 					continue
 				}
-				if err := obraUpload(opts, cfg, cfg.Library[obraIdx]); err != nil {
+				if err := obraUpload(opts, cfg, cfg.Library[obraIdx], nil); err != nil {
 					if !errors.Is(err, huh.ErrUserAborted) {
 						eprintln("barfi:", err)
 					}
