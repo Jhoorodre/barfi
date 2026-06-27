@@ -528,6 +528,9 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 		}
 		opts = append(opts, huh.NewOption("← Voltar ao menu", "__exit__"))
 		opts = append(opts, huh.NewOption("+ Nova pasta aqui", "__create__"))
+		if len(currentItems) > 0 {
+			opts = append(opts, huh.NewOption("☑ Selecionar em lote", "__batch__"))
+		}
 		isFav := false
 		for _, f := range cfg.Folders {
 			if f.ID == path[len(path)-1].id {
@@ -698,6 +701,81 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 			}
 			path = append(path, crumb{newID, name})
 			currentItems = nil
+		case "__batch__":
+			var batchOpts []huh.Option[string]
+			for _, item := range currentItems {
+				label := "[arquivo] " + item.Name
+				if item.IsDirectory {
+					label = "[pasta] " + item.Name
+				}
+				batchOpts = append(batchOpts, huh.NewOption(label, item.ID))
+			}
+			var selectedIDs []string
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewMultiSelect[string]().
+					Title("Selecionar itens em: " + pathStr).
+					Description("Espaço para marcar, enter para confirmar.").
+					Options(batchOpts...).
+					Value(&selectedIDs),
+			)).Run(); err != nil {
+				if !errors.Is(err, huh.ErrUserAborted) {
+					return err
+				}
+				continue
+			}
+			if len(selectedIDs) == 0 {
+				continue
+			}
+
+			var batchAction string
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewSelect[string]().
+					Title(fmt.Sprintf("%d item(s) selecionado(s)", len(selectedIDs))).
+					Options(
+						huh.NewOption("Mover para...", "move"),
+						huh.NewOption("Excluir", "delete"),
+						huh.NewOption("← Cancelar", "cancel"),
+					).Value(&batchAction),
+			)).Run(); err != nil || batchAction == "cancel" {
+				if err != nil && !errors.Is(err, huh.ErrUserAborted) {
+					return err
+				}
+				continue
+			}
+
+			if batchAction == "move" {
+				destID, err := pickFolder(server, cfg.Token, "Mover para", "")
+				if err != nil {
+					if !errors.Is(err, huh.ErrUserAborted) {
+						eprintln("barfi:", err)
+					}
+					continue
+				}
+				for _, id := range selectedIDs {
+					if err := moveItem(server, cfg.Token, id, destID); err != nil {
+						eprintln("barfi:", err)
+					}
+				}
+			} else {
+				var confirm bool
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewConfirm().
+						Title(fmt.Sprintf("Excluir %d item(s)?", len(selectedIDs))).
+						Description("Pastas serão excluídas com todo o seu conteúdo.").
+						Value(&confirm),
+				)).Run(); err != nil || !confirm {
+					continue
+				}
+				for _, id := range selectedIDs {
+					if err := deleteDirectory(server, cfg.Token, id); err != nil {
+						eprintln("barfi:", err)
+					}
+				}
+			}
+			if newItems, _, err := listDirectory(server, cfg.Token, path[len(path)-1].id); err == nil {
+				currentItems = newItems
+			}
+
 		default:
 			for _, item := range currentItems {
 				if item.ID == action {
