@@ -905,18 +905,36 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 		parentID = rootID
 	}
 
+	serverItems, _, err := listDirectory(server, cfg.Token, parentID)
+	if err != nil {
+		return fmt.Errorf("listar pasta destino: %w", err)
+	}
+	serverFolders := make(map[string]string) // name → ID
+	for _, item := range serverItems {
+		if item.IsDirectory {
+			serverFolders[item.Name] = item.ID
+		}
+	}
+
 	for _, name := range toAdd {
-		folderID, err := createDirectory(server, cfg.Token, parentID, name)
-		if err != nil {
-			eprintln("barfi: criar pasta '"+name+"':", err)
-			continue
+		var folderID string
+		if id, exists := serverFolders[name]; exists {
+			folderID = id
+			eprintf("barfi: ↔ %s (pasta existente vinculada)\n", name)
+		} else {
+			id, err := createDirectory(server, cfg.Token, parentID, name)
+			if err != nil {
+				eprintln("barfi: criar pasta '"+name+"':", err)
+				continue
+			}
+			folderID = id
+			eprintf("barfi: ✓ %s\n", name)
 		}
 		cfg.Library = append(cfg.Library, LibraryItem{
 			Name:      name,
 			LocalPath: filepath.Join(basePath, name),
 			FolderID:  folderID,
 		})
-		eprintf("barfi: ✓ %s\n", name)
 	}
 	saveAndReloadCfg(mCfg, cfg)
 	return nil
