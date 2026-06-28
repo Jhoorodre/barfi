@@ -1666,7 +1666,7 @@ type reportEntry struct {
 }
 
 // walkBuzzheavier recursively lists all files under dirID, accumulating entries.
-// pathParts tracks the folder hierarchy for display.
+// pathParts tracks the folder hierarchy for display; rootName is the section label.
 func walkBuzzheavier(server, token, dirID string, pathParts []string, entries *[]reportEntry) error {
 	items, _, err := listDirectory(server, token, dirID)
 	if err != nil {
@@ -1688,19 +1688,14 @@ func walkBuzzheavier(server, token, dirID string, pathParts []string, entries *[
 	return nil
 }
 
-func generateReport(cfg *Config, profileName string) (string, error) {
-	if cfg.Token == "" {
-		return "", fmt.Errorf("token não configurado no perfil atual")
+// writeSection writes grouped entries (grouped by path) into sb under a section header.
+func writeSection(sb *strings.Builder, header string, entries []reportEntry) {
+	fmt.Fprintf(sb, "=== %s ===\n", header)
+	if len(entries) == 0 {
+		fmt.Fprintln(sb, "  (nenhum arquivo)")
+		sb.WriteByte('\n')
+		return
 	}
-
-	eprintln("barfi: varrendo Buzzheavier, aguarde...")
-
-	var entries []reportEntry
-	if err := walkBuzzheavier(cfg.Server, cfg.Token, "", nil, &entries); err != nil {
-		return "", fmt.Errorf("erro ao varrer Buzzheavier: %w", err)
-	}
-
-	// Group entries by path for cleaner output.
 	byPath := make(map[string][]reportEntry)
 	var pathOrder []string
 	seen := make(map[string]bool)
@@ -1711,6 +1706,78 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 		}
 		byPath[e.path] = append(byPath[e.path], e)
 	}
+	for _, p := range pathOrder {
+		fmt.Fprintf(sb, "  %s/\n", p)
+		for _, e := range byPath[p] {
+			fmt.Fprintf(sb, "    %s | %s\n", e.name, e.url)
+		}
+	}
+	sb.WriteByte('\n')
+}
+
+func generateReport(cfg *Config, profileName string) (string, error) {
+	if cfg.Token == "" {
+		return "", fmt.Errorf("token não configurado no perfil atual")
+	}
+
+	eprintln("barfi: varrendo Buzzheavier, aguarde...")
+
+	// Build a set of library folder IDs so we can separate them from "raiz".
+	libFolderIDs := make(map[string]bool)
+	for _, item := range cfg.Library {
+		if item.FolderID != "" {
+			libFolderIDs[item.FolderID] = true
+		}
+	}
+
+	// Walk each library folder separately (labeled by library item name).
+	type libSection struct {
+		name    string
+		entries []reportEntry
+	}
+	var libSections []libSection
+	for _, item := range cfg.Library {
+		if item.FolderID == "" {
+			continue
+		}
+		eprintln("barfi: varrendo biblioteca:", item.Name)
+		var entries []reportEntry
+		if err := walkBuzzheavier(cfg.Server, cfg.Token, item.FolderID, nil, &entries); err != nil {
+			eprintln("barfi: aviso: erro ao varrer '"+item.Name+"':", err.Error())
+			continue
+		}
+		libSections = append(libSections, libSection{name: item.Name, entries: entries})
+	}
+
+	// Walk root; skip top-level folders that are library folder IDs.
+	eprintln("barfi: varrendo raiz...")
+	rootItems, _, err := listDirectory(cfg.Server, cfg.Token, "")
+	if err != nil {
+		return "", fmt.Errorf("erro ao listar raiz: %w", err)
+	}
+	var rootEntries []reportEntry
+	for _, item := range rootItems {
+		if item.IsDirectory {
+			if libFolderIDs[item.ID] {
+				continue // already covered in library sections
+			}
+			if err := walkBuzzheavier(cfg.Server, cfg.Token, item.ID, []string{item.Name}, &rootEntries); err != nil {
+				eprintln("barfi: aviso: erro ao varrer pasta '"+item.Name+"':", err.Error())
+			}
+		} else {
+			rootEntries = append(rootEntries, reportEntry{
+				path: "/",
+				name: item.Name,
+				url:  cfg.Server + "/" + item.ID,
+			})
+		}
+	}
+
+	// Count total files.
+	total := len(rootEntries)
+	for _, s := range libSections {
+		total += len(s.entries)
+	}
 
 	now := time.Now()
 	safeName := strings.NewReplacer(" ", "_", "/", "_", "\\", "_").Replace(profileName)
@@ -1720,15 +1787,12 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 	fmt.Fprintf(&sb, "# Relatório Buzzheavier — Perfil: %s\n", profileName)
 	fmt.Fprintf(&sb, "# Gerado em: %s\n", now.Format("02/01/2006 15:04:05"))
 	fmt.Fprintf(&sb, "# Servidor: %s\n", cfg.Server)
-	fmt.Fprintf(&sb, "# Total de arquivos: %d\n\n", len(entries))
+	fmt.Fprintf(&sb, "# Total de arquivos: %d\n\n", total)
 
-	for _, p := range pathOrder {
-		fmt.Fprintf(&sb, "%s/\n", p)
-		for _, e := range byPath[p] {
-			fmt.Fprintf(&sb, "  %s | %s\n", e.name, e.url)
-		}
-		sb.WriteByte('\n')
+	for _, s := range libSections {
+		writeSection(&sb, "Biblioteca: "+s.name, s.entries)
 	}
+	writeSection(&sb, "Raiz (sem biblioteca)", rootEntries)
 
 	if err := os.WriteFile(filename, []byte(sb.String()), 0644); err != nil {
 		return "", fmt.Errorf("erro ao salvar relatório: %w", err)
