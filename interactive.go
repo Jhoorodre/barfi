@@ -1781,7 +1781,15 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 
 	now := time.Now()
 	safeName := strings.NewReplacer(" ", "_", "/", "_", "\\", "_").Replace(profileName)
-	filename := fmt.Sprintf("barfi-report-%s-%s.txt", safeName, now.Format("20060102-150405"))
+	basename := fmt.Sprintf("barfi-report-%s-%s.txt", safeName, now.Format("20060102-150405"))
+
+	// Salva na home do usuário para que o arquivo sempre apareça num
+	// local fixo e acessível, inclusive via WSL2 (\\wsl$\<distro>\home\...).
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	filename := filepath.Join(home, basename)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Relatório Buzzheavier — Perfil: %s\n", profileName)
