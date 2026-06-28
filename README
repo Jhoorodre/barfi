@@ -1,3 +1,4 @@
+```
 ########     ###    ########  ######## ####
 ##     ##   ## ##   ##     ## ##        ##
 ##     ##  ##   ##  ##     ## ##        ##
@@ -5,95 +6,139 @@
 ##     ## ######### ##   ##   ##        ##
 ##     ## ##     ## ##    ##  ##        ##
 ########  ##     ## ##     ## ##       ####
-=============================================
-Command line file uploader for buzzheavier
+```
 
+> Uploader de linha de comando para [buzzheavier.com](https://buzzheavier.com)
 
-INSTALL
--------
+[Read in English](README.md)
+
+---
+
+### Instalação
+
+```bash
 go install github.com/burritoflakes/barfi@latest
+```
 
-Or build from source:
+Ou compilar da fonte:
+
+```bash
 git clone https://github.com/burritoflakes/barfi
 cd barfi && CGO_ENABLED=0 go build -ldflags="-s -w" -o barfi ./
+```
 
-Pre-built binaries are provided for Linux only (amd64, arm64, 386).
-For macOS and Windows, build from source using the commands above.
+Binários pré-compilados estão disponíveis para Linux (amd64, arm64) nas [releases](https://github.com/burritoflakes/barfi/releases).
+macOS e Windows precisam compilar da fonte.
 
+> Requer Go 1.23.0 ou superior.
 
-SETUP
------
+---
+
+### Configuração inicial
+
+```bash
 barfi --config set server https://buzzheavier.com
-barfi --config set token YOUR_TOKEN
+barfi --config set token SEU_TOKEN
 barfi --config set workers 5
 barfi --config show
+```
 
+---
 
-USAGE
------
-Upload a file:
-  ./barfi path/to/file.txt
+### Uso básico
 
-Upload to a directory:
-  ./barfi --parent-id=directoryId path/to/file.txt
+```bash
+# Enviar um arquivo
+barfi arquivo.txt
 
-Upload via guest link:
-  ./barfi --guest-upload-link-id=linkId path/to/file.txt
+# Enviar para uma pasta específica
+barfi --parent-id=ID_DA_PASTA arquivo.txt
 
-Upload with a note:
-  ./barfi --note="draft cut" path/to/file.txt
+# Enviar vários arquivos de uma vez
+barfi foto1.jpg foto2.jpg video.mp4
 
-Quiet mode (link only on stdout):
-  ./barfi -q path/to/file.txt
+# Enviar todos os arquivos de um diretório (recursivo)
+barfi -r ./minha-pasta/
 
-JSON output (raw server response):
-  ./barfi --json path/to/file.txt
+# Enviar com uma nota
+barfi --note="versão final" arquivo.zip
 
-Override part size:
-  ./barfi --part-size=25MB path/to/file.txt
+# Enviar via link de convidado
+barfi --guest-upload-link-id=ID_DO_LINK arquivo.txt
 
-Override workers:
-  ./barfi -j 10 path/to/file.txt
+# Capturar o link em um script
+LINK=$(barfi -q arquivo.txt)
+```
 
-Capture link in a script:
-  LINK=$(./barfi -q path/to/file.txt)
+---
 
+### Modo interativo
 
-FLAGS
------
---server URL               Server base URL (env: BARFI_SERVER)
---token T                  Bearer token (env: BARFI_TOKEN)
--l, --location-id ID       Storage bucket id (env: BARFI_LOCATION_ID)
--d, --parent-id ID         Target directory (requires --token)
-    --guest-upload-link-id Guest upload link
-    --note TEXT            Note (max 500 chars)
-    --part-size BYTES      Override part size (e.g. 25MB, default 100MB)
--j, --workers N            Parallel upload workers (default 5)
-    --save                 Persist current settings to config file
-    --config ACTION        Config management (show, set, unset)
--q, --quiet                Suppress progress output
-    --json                 Print server response as JSON
--h, --help                 Print help
-    --version              Print version
+Execute `barfi` sem argumentos para abrir o modo interativo com TUI completa:
 
+```bash
+barfi
+```
 
-CONFIG
-------
-Stored at ~/.config/barfi/config.json (mode 0600).
+O modo interativo oferece:
 
-  barfi --config show                        Show current config
-  barfi --config set server https://buzzheavier.com Set a key
-  barfi --config set workers 10              Set workers
-  barfi --config unset token                 Remove a key
+- **Enviar arquivos** — seleção de arquivos e pastas de destino via menus
+- **Gerenciar Buzzheavier** — navegue, crie, renomeie, mova e exclua pastas no servidor; gerencie favoritos; edite notas de arquivos; delete em lote
+- **Biblioteca** — vincule pastas locais a pastas remotas para envios recorrentes com preview de conteúdo; sincronize com o servidor
+- **Gerenciar Perfis** — crie e alterne entre múltiplos perfis de configuração (ex: conta pessoal e conta de trabalho)
 
-Keys: server, token, locationId, parentId, workers
+---
 
-Config precedence: flags > env vars > config file
+### Referência de flags
 
+| Flag | Atalho | Descrição |
+|------|--------|-----------|
+| `--server URL` | | URL base do servidor |
+| `--token T` | | Token de autenticação |
+| `--location-id ID` | `-l` | ID do bucket de armazenamento |
+| `--parent-id ID` | `-d` | ID da pasta de destino |
+| `--guest-upload-link-id ID` | | ID do link de convidado |
+| `--note TEXTO` | | Nota do upload (máx. 500 caracteres) |
+| `--part-size BYTES` | | Tamanho de cada parte (ex: `25MB`, padrão: `100MB`) |
+| `--workers N` | `-j` | Goroutines paralelas de upload (padrão: 5) |
+| `--recursive` | `-r` | Enviar diretórios recursivamente |
+| `--quiet` | `-q` | Silencia o progresso; imprime somente o link no stdout |
+| `--json` | | Imprime a resposta bruta do servidor como JSON |
+| `--save` | | Persiste as configurações atuais no arquivo de config |
+| `--config ACTION` | | Gerencia a config: `show`, `set`, `unset` |
+| `--version` | | Exibe a versão |
+| `--help` | `-h` | Exibe a ajuda |
 
-EXIT CODES
-----------
-0    Success
-1    Upload failed
-2    Usage error
-130  Interrupted (Ctrl+C)
+Variáveis de ambiente: `BARFI_SERVER`, `BARFI_TOKEN`, `BARFI_LOCATION_ID`.
+
+Precedência: flags > variáveis de ambiente > arquivo de config.
+
+---
+
+### Configuração
+
+Armazenada em `~/.config/barfi/config.json` (modo `0600`).
+
+```bash
+barfi --config show                               # Exibe config atual
+barfi --config set server https://buzzheavier.com
+barfi --config set token SEU_TOKEN
+barfi --config set workers 10
+barfi --config set parent-id ID_DA_PASTA          # Pasta padrão
+barfi --config unset token                        # Remove uma chave
+```
+
+Chaves válidas: `server`, `token`, `locationId`, `parentId`, `workers`.
+
+**Múltiplos perfis** são gerenciados pelo modo interativo. Use o menu "Gerenciar Perfis" para criar, editar, alternar e excluir perfis.
+
+---
+
+### Códigos de saída
+
+| Código | Significado |
+|--------|-------------|
+| `0` | Sucesso |
+| `1` | Falha no upload |
+| `2` | Erro de uso |
+| `130` | Interrompido (Ctrl+C) |
