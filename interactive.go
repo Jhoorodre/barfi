@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/huh"
 )
@@ -1466,6 +1467,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 						huh.NewOption("Gerenciar Biblioteca", "library"),
 						huh.NewOption("Gerenciar Buzzheavier", "folders"),
 						huh.NewOption("Gerenciar Perfis", "profiles"),
+						huh.NewOption("Gerar Relatório", "report"),
 						huh.NewOption("Sair", "exit"),
 					).
 					Value(&action),
@@ -1507,6 +1509,24 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 					eprintln("barfi: erro ao gerenciar pastas:", err)
 				}
 			}
+			continue
+		}
+
+		if action == "report" {
+			filename, err := generateReport(cfg, mCfg.ActiveProfile)
+			if err != nil {
+				eprintln("barfi: erro ao gerar relatório:", err)
+			} else {
+				eprintln("barfi: relatório salvo em:", filename)
+			}
+			_ = huh.NewForm(huh.NewGroup(
+				huh.NewNote().Title("Relatório gerado").Description(func() string {
+					if err != nil {
+						return "Erro: " + err.Error()
+					}
+					return "Salvo em: " + filename
+				}()),
+			)).Run()
 			continue
 		}
 
@@ -1636,4 +1656,82 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 			return nil
 		}
 	}
+}
+
+// reportEntry holds a discovered file for the report.
+type reportEntry struct {
+	path string
+	name string
+	url  string
+}
+
+// walkBuzzheavier recursively lists all files under dirID, accumulating entries.
+// pathParts tracks the folder hierarchy for display.
+func walkBuzzheavier(server, token, dirID string, pathParts []string, entries *[]reportEntry) error {
+	items, _, err := listDirectory(server, token, dirID)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if item.IsDirectory {
+			if err := walkBuzzheavier(server, token, item.ID, append(pathParts, item.Name), entries); err != nil {
+				return err
+			}
+		} else {
+			*entries = append(*entries, reportEntry{
+				path: "/" + strings.Join(pathParts, "/"),
+				name: item.Name,
+				url:  server + "/" + item.ID,
+			})
+		}
+	}
+	return nil
+}
+
+func generateReport(cfg *Config, profileName string) (string, error) {
+	if cfg.Token == "" {
+		return "", fmt.Errorf("token não configurado no perfil atual")
+	}
+
+	eprintln("barfi: varrendo Buzzheavier, aguarde...")
+
+	var entries []reportEntry
+	if err := walkBuzzheavier(cfg.Server, cfg.Token, "", nil, &entries); err != nil {
+		return "", fmt.Errorf("erro ao varrer Buzzheavier: %w", err)
+	}
+
+	// Group entries by path for cleaner output.
+	byPath := make(map[string][]reportEntry)
+	var pathOrder []string
+	seen := make(map[string]bool)
+	for _, e := range entries {
+		if !seen[e.path] {
+			seen[e.path] = true
+			pathOrder = append(pathOrder, e.path)
+		}
+		byPath[e.path] = append(byPath[e.path], e)
+	}
+
+	now := time.Now()
+	safeName := strings.NewReplacer(" ", "_", "/", "_", "\\", "_").Replace(profileName)
+	filename := fmt.Sprintf("barfi-report-%s-%s.txt", safeName, now.Format("20060102-150405"))
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Relatório Buzzheavier — Perfil: %s\n", profileName)
+	fmt.Fprintf(&sb, "# Gerado em: %s\n", now.Format("02/01/2006 15:04:05"))
+	fmt.Fprintf(&sb, "# Servidor: %s\n", cfg.Server)
+	fmt.Fprintf(&sb, "# Total de arquivos: %d\n\n", len(entries))
+
+	for _, p := range pathOrder {
+		fmt.Fprintf(&sb, "%s/\n", p)
+		for _, e := range byPath[p] {
+			fmt.Fprintf(&sb, "  %s | %s\n", e.name, e.url)
+		}
+		sb.WriteByte('\n')
+	}
+
+	if err := os.WriteFile(filename, []byte(sb.String()), 0644); err != nil {
+		return "", fmt.Errorf("erro ao salvar relatório: %w", err)
+	}
+	return filename, nil
 }

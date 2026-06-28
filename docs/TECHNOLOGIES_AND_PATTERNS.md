@@ -84,6 +84,7 @@ Barfi is a CLI client for multipart file uploads with parallel workers, multi-pr
 - CLI management: `--config set/unset/show`
 - Interactive management: switch, edit, create, delete profiles
 - `defaultNote` per profile (interactive mode only)
+- **Token encryption at rest**: AES-256-GCM with a machine-derived key (see §3.8)
 
 ### 2.3 File uploads
 
@@ -126,6 +127,7 @@ Barfi is a CLI client for multipart file uploads with parallel workers, multi-pr
 - `huh.ErrUserAborted` handling: Ctrl+C returns to menu, does not exit
 - Immediate persist after every change (`saveAndReloadCfg`)
 - WSL2 path normalization: `C:\path` → `/mnt/c/path` (via `wslpath -u` with manual fallback)
+- **Post-upload loop**: after completing an upload started from interactive mode, the program returns to the main menu instead of exiting (controlled by `fromInteractive` flag in `runCLI`)
 
 ### 2.6 Validations
 
@@ -294,6 +296,37 @@ Infinite loop with action switch; `huh.ErrUserAborted` to go back without exitin
 
 ---
 
+### 3.8 Token encryption at rest pattern
+**Files**: `encrypt.go`, `machineid_linux.go`, `machineid_windows.go`, `machineid_other.go`
+
+```go
+const encPrefix = "enc1:"
+
+func deriveKey() []byte {
+    home, _ := os.UserHomeDir()
+    raw := "barfi-token-v1\x00" + machineID() + "\x00" + home
+    h := sha256.Sum256([]byte(raw))
+    return h[:]
+}
+
+func encryptToken(plaintext string) (string, error) { /* AES-GCM + random nonce + base64 */ }
+
+func decryptToken(stored string) (string, error) {
+    if !strings.HasPrefix(stored, encPrefix) {
+        return stored, nil // backward compat: plain text tokens pass through
+    }
+    // AES-GCM decrypt
+}
+```
+
+Key derivation: `SHA-256("barfi-token-v1\x00" + machineID() + "\x00" + homeDir)`. Platform-specific `machineID()` is implemented with build tags: Linux reads `/etc/machine-id` or `/var/lib/dbus/machine-id`, Windows uses `COMPUTERNAME`, other platforms fall back to hostname. Tokens without the `enc1:` prefix are treated as plain text (backward compatibility). Config file stores only ciphertext; in-memory value is always plaintext.
+
+Zero new dependencies — entire implementation uses `crypto/aes`, `crypto/cipher`, `crypto/rand`, `crypto/sha256`, and `encoding/base64` from the standard library.
+
+Tested in `encrypt_test.go`: round-trip, plain-text backward compat, corrupted ciphertext error, unique ciphertext per call (random nonce).
+
+---
+
 ### 3.7 Adaptive progress UI pattern
 **File**: `progress.go` (473 lines)
 
@@ -325,6 +358,10 @@ barfi/
 ├── interactive.go       # Interactive mode, TUI, menus, library        (1639 lines)
 ├── progress.go          # Progress tracking, TTY/pipe rendering        (473 lines)
 ├── partsize.go          # BUS protocol constants, part size calc       (83 lines)
+├── encrypt.go           # AES-256-GCM token encryption at rest
+├── machineid_linux.go   # machineID() — reads /etc/machine-id
+├── machineid_windows.go # machineID() — reads COMPUTERNAME env var
+├── machineid_other.go   # machineID() — hostname fallback (other OS)
 ├── termwidth_unix.go    # Terminal width detection — Unix
 ├── termwidth_windows.go # Terminal width detection — Windows
 ├── main_test.go         # E2E tests, fake BUS server
@@ -332,13 +369,14 @@ barfi/
 ├── config_test.go       # Unit tests — config
 ├── progress_test.go     # Unit tests — progress
 ├── partsize_test.go     # Unit tests — partsize
+├── encrypt_test.go      # Unit tests — token encryption
 ├── go.mod               # Module definition
 ├── go.sum               # Dependency hashes
 ├── CLAUDE.md            # Development guide
 ├── README.md            # English documentation (GitHub default)
 ├── README.pt-BR.md      # Portuguese documentation
 ├── README               # Portuguese documentation (legacy, no extension)
-├── barfi.bat            # Windows batch wrapper
+├── barfi.bat            # Windows batch wrapper (WSL2 launcher, no pause)
 └── docs/
     ├── buzzheavier-api.md           # buzzheavier.com API reference
     └── TECHNOLOGIES_AND_PATTERNS.md # This file
@@ -362,7 +400,21 @@ HTTP headers used in multipart upload: `Upload-Length`, `Upload-Part-Number`.
 
 ---
 
-## 6. Useful commands
+## 6. CI/CD (`.github/workflows/release.yaml`)
+
+Triggered by tags matching `v*.*.*`. Three sequential jobs:
+
+| Job | What it does |
+|-----|-------------|
+| `fmt-check` | Runs `gofmt -l .`; fails if any file is unformatted |
+| `build` | Matrix build for `linux/amd64`, `linux/arm64`, `windows/amd64` with `CGO_ENABLED=0` |
+| `release` | Downloads all artifacts and creates a GitHub Release with `generate_release_notes: true` |
+
+Windows binary is named `barfi-windows-amd64.exe`; Linux binaries omit the extension.
+
+---
+
+## 7. Useful commands
 
 ```bash
 # Production build
