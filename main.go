@@ -410,6 +410,13 @@ func runCLI(args []string) int {
 						return 130
 					}
 
+					var sErr *serverError
+					if errors.As(err, &sErr) && strings.Contains(sErr.message, "already exists") {
+						eprintf("barfi: %s já existe no servidor — pulado\n", fileName)
+						successCount++ // conta como sucesso: arquivo já está lá
+						continue
+					}
+
 					eprintf("barfi falha no envio de %s\n", fileName)
 					formatError(err)
 					failed = append(failed, failedUpload{filePath, err})
@@ -465,6 +472,9 @@ func runCLI(args []string) int {
 					filesToUpload = retryFiles
 					continue
 				} else {
+					if fromInteractive {
+						break // volta ao menu em vez de encerrar
+					}
 					return 1
 				}
 			} else {
