@@ -1722,14 +1722,6 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 
 	eprintln("barfi: varrendo Buzzheavier, aguarde...")
 
-	// Build a set of library folder IDs so we can separate them from "raiz".
-	libFolderIDs := make(map[string]bool)
-	for _, item := range cfg.Library {
-		if item.FolderID != "" {
-			libFolderIDs[item.FolderID] = true
-		}
-	}
-
 	// Walk each library folder separately (labeled by library item name).
 	type libSection struct {
 		name    string
@@ -1749,32 +1741,8 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 		libSections = append(libSections, libSection{name: item.Name, entries: entries})
 	}
 
-	// Walk root; skip top-level folders that are library folder IDs.
-	eprintln("barfi: varrendo raiz...")
-	rootItems, _, err := listDirectory(cfg.Server, cfg.Token, "")
-	if err != nil {
-		return "", fmt.Errorf("erro ao listar raiz: %w", err)
-	}
-	var rootEntries []reportEntry
-	for _, item := range rootItems {
-		if item.IsDirectory {
-			if libFolderIDs[item.ID] {
-				continue // already covered in library sections
-			}
-			if err := walkBuzzheavier(cfg.Server, cfg.Token, item.ID, []string{item.Name}, &rootEntries); err != nil {
-				eprintln("barfi: aviso: erro ao varrer pasta '"+item.Name+"':", err.Error())
-			}
-		} else {
-			rootEntries = append(rootEntries, reportEntry{
-				path: "/",
-				name: item.Name,
-				url:  cfg.Server + "/" + item.ID,
-			})
-		}
-	}
-
 	// Count total files.
-	total := len(rootEntries)
+	var total int
 	for _, s := range libSections {
 		total += len(s.entries)
 	}
@@ -1799,9 +1767,8 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 	fmt.Fprintf(&sb, "# Total de arquivos: %d\n\n", total)
 
 	for _, s := range libSections {
-		writeSection(&sb, "Biblioteca: "+s.name, s.entries)
+		writeSection(&sb, s.name, s.entries)
 	}
-	writeSection(&sb, "Raiz (sem biblioteca)", rootEntries)
 
 	if err := os.WriteFile(filename, []byte(sb.String()), 0644); err != nil {
 		return "", fmt.Errorf("erro ao salvar relatório: %w", err)
