@@ -1780,10 +1780,17 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 	}
 
 	now := time.Now()
-	safeName := strings.NewReplacer(" ", "_", "/", "_", "\\", "_").Replace(profileName)
+	safeName := strings.NewReplacer(" ", "-", "/", "-", "\\", "-").Replace(profileName)
 	basename := fmt.Sprintf("barfi-report-%s-%s.txt", safeName, now.Format("20060102-150405"))
 
-	filename := basename
+	// No WSL2, salva na pasta do usuário Windows (USERPROFILE = C:\Users\...) para
+	// que o arquivo apareça diretamente no Explorer sem navegar pelo filesystem Linux.
+	var filename string
+	if winProfile := os.Getenv("USERPROFILE"); winProfile != "" {
+		filename = filepath.Join(normalizePath(winProfile), basename)
+	} else {
+		filename = basename
+	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Relatório Buzzheavier — Perfil: %s\n", profileName)
