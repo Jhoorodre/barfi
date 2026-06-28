@@ -60,15 +60,34 @@ barfi photo1.jpg photo2.jpg video.mp4
 # Upload all files in a directory (recursive)
 barfi -r ./my-folder/
 
-# Upload with a note
+# Upload with a note (max 500 chars)
 barfi --note="final cut" archive.zip
 
-# Upload via guest link
+# Upload via guest link (no token required)
 barfi --guest-upload-link-id=LINK_ID file.txt
 
-# Capture the link in a script
+# Link-only output for scripting
 LINK=$(barfi -q file.txt)
+
+# Override workers and part size for this run
+barfi -j 10 --part-size=25MB large-file.bin
+
+# Persist current flags to the active profile
+barfi --parent-id=FOLDER_ID --workers=10 --save
 ```
+
+---
+
+### How uploads work
+
+Files are split into parts and uploaded in parallel:
+
+- **Part size**: auto-calculated — defaults to 100 MB; files smaller than 100 MB use their actual size, minimum 5 MB. Override with `--part-size`.
+- **Workers**: 5 goroutines by default, configurable with `-j`.
+- **Retry**: up to 5 attempts per part on 5xx errors, exponential backoff (1 → 2 → 4 → 8 → 16 s). 4xx errors are non-retryable.
+- **Limits**: max 1 TB per file; max 10,000 parts per upload.
+- **Batch retry**: after uploading a batch of files, any failures are offered for interactive retry.
+- **Progress**: animated bar at 10 Hz when stderr is a TTY; one line per 10% when piped; link-only on stdout with `--quiet`.
 
 ---
 
@@ -82,10 +101,12 @@ barfi
 
 Interactive mode provides:
 
-- **Upload files** — pick files and destination folder through menus
-- **Manage Buzzheavier** — browse, create, rename, move, and delete remote folders; manage bookmarks; edit file notes; batch-delete items
-- **Library** — link local folders to remote folders for recurring uploads with content preview; sync with the server
-- **Manage Profiles** — create and switch between multiple configuration profiles (e.g. personal and work accounts)
+- **Upload files** — pick files and destination folder through menus; asks about recursive mode for directories
+- **Manage Buzzheavier** — browse, create, rename, move, and delete remote folders; manage bookmarks; edit file notes; batch-select and batch-delete items
+- **Library** — link local folders to remote folders for recurring uploads; shows content preview (up to 15 items per section); sync local paths against the server
+- **Manage Profiles** — create, edit, switch between, and delete named configuration profiles (e.g. personal and work accounts)
+
+WSL2 users: Windows paths (e.g. `C:\Users\foo`) are automatically normalized to `/mnt/c/Users/foo`.
 
 ---
 
@@ -95,23 +116,23 @@ Interactive mode provides:
 |------|-------|-------------|
 | `--server URL` | | Server base URL |
 | `--token T` | | Authentication token |
-| `--location-id ID` | `-l` | Storage bucket ID |
-| `--parent-id ID` | `-d` | Target folder ID |
-| `--guest-upload-link-id ID` | | Guest upload link ID |
+| `--location-id ID` | `-l` | Storage bucket ID (where files are physically stored) |
+| `--parent-id ID` | `-d` | Target folder ID (where files appear in your file tree) |
+| `--guest-upload-link-id ID` | | Guest upload link ID (no token required) |
 | `--note TEXT` | | Upload note (max 500 chars) |
-| `--part-size BYTES` | | Per-part size override (e.g. `25MB`, default: `100MB`) |
+| `--part-size BYTES` | | Per-part size override (e.g. `25MB`; range: 5 MB – 100 MB) |
 | `--workers N` | `-j` | Parallel upload goroutines (default: 5) |
 | `--recursive` | `-r` | Upload directories recursively |
 | `--quiet` | `-q` | Suppress progress; print only the link on stdout |
 | `--json` | | Print raw server response as JSON |
-| `--save` | | Persist current resolved settings to config file |
-| `--config ACTION` | | Manage config: `show`, `set`, `unset` |
+| `--save` | | Persist the current resolved settings to the active profile |
+| `--config ACTION` | | Manage config: `show`, `set KEY VALUE`, `unset KEY` |
 | `--version` | | Print version |
 | `--help` | `-h` | Print help |
 
-Environment variables: `BARFI_SERVER`, `BARFI_TOKEN`, `BARFI_LOCATION_ID`.
+Environment variables (lowest precedence after config file): `BARFI_SERVER`, `BARFI_TOKEN`, `BARFI_LOCATION_ID`.
 
-Precedence: flags > environment variables > config file.
+Precedence: `flags > env vars > config file`.
 
 ---
 
@@ -120,17 +141,20 @@ Precedence: flags > environment variables > config file.
 Stored at `~/.config/barfi/config.json` (mode `0600`).
 
 ```bash
-barfi --config show                               # Show current config
+barfi --config show
 barfi --config set server https://buzzheavier.com
 barfi --config set token YOUR_TOKEN
 barfi --config set workers 10
-barfi --config set parent-id FOLDER_ID            # Default destination folder
-barfi --config unset token                        # Remove a key
+barfi --config set parent-id FOLDER_ID     # default destination folder
+barfi --config set location-id BUCKET_ID   # default storage bucket
+barfi --config unset token
 ```
 
-Valid keys: `server`, `token`, `locationId`, `parentId`, `workers`.
+Valid keys for `--config set/unset`: `server`, `token`, `locationId`, `parentId`, `workers`.
 
-**Multiple profiles** are managed through interactive mode. Use the "Manage Profiles" menu to create, edit, switch between, and delete profiles.
+**Multiple profiles** are managed through interactive mode ("Manage Profiles" menu). Each profile stores its own `server`, `token`, `parentId`, `locationId`, `workers`, and `defaultNote`. Profiles are useful for separating personal and work accounts or different servers.
+
+Old flat configs (pre-0.1.0) are automatically migrated to profile format on first load.
 
 ---
 
