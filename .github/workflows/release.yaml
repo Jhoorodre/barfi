@@ -1,32 +1,77 @@
-name: barfi binary
+name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - "v*.*.*"
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
-  release-barfi:
-    name: Release barfi binary
+  fmt-check:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Files not formatted (run go fmt ./...):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: fmt-check
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux]
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+            asset: barfi-linux-amd64
+          - goos: linux
+            goarch: arm64
+            asset: barfi-linux-arm64
+          - goos: windows
+            goarch: amd64
+            asset: barfi-windows-amd64.exe
     steps:
       - uses: actions/checkout@v4
-      - uses: wangyoucao577/go-release-action@v1
+      - uses: actions/setup-go@v5
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          goos: ${{ matrix.goos }}
-          goarch: ${{ matrix.goarch }}
-          project_path: "./"
-          binary_name: "barfi"
-          compress_assets: "OFF"
-          md5sum: false
-          ldflags: "-s -w"
-          goversion: "https://dl.google.com/go/go1.26.2.linux-amd64.tar.gz"
-          asset_name: "barfi-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go-version: "1.23"
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -ldflags="-s -w" -o ${{ matrix.asset }} ./
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -243,237 +243,246 @@ func runCLI(args []string) int {
 		return 2
 	}
 
-	if len(opts.files) == 0 && !opts.save {
-		err := runInteractiveMode(opts, &mCfg, &cfg)
-		if err != nil {
-			if errors.Is(err, huh.ErrUserAborted) {
-				eprintln("barfi: operação cancelada pelo usuário")
-				return 130
-			}
-			eprintln("barfi: erro no modo interativo:", err)
-			return 2
-		}
-	} else if opts.note == "" {
-		// Caso não seja interativo e não tenha passado nota por flag, usa a do perfil
-		opts.note = cfg.DefaultNote
-	}
-
-	if opts.save {
-		mCfg.Profiles[mCfg.ActiveProfile] = cfg
-		path, perr := defaultConfigPath()
-		if perr != nil {
-			eprintln("barfi:", perr)
-			return 2
-		}
-		if err := saveConfig(path, mCfg); err != nil {
-			eprintln("barfi:", err)
-			return 2
-		}
-		if cfg.Token != "" && !opts.quiet {
-			eprintf("barfi: perfil %q atualizado em %s (modo 0600)\n", mCfg.ActiveProfile, path)
-		}
-		if len(opts.files) == 0 {
-			return 0
-		}
-	}
-
-	if len(opts.files) == 0 {
-		eprintln("barfi: nenhum arquivo selecionado (use --help para ajuda)")
-		return 2
-	}
-	if cfg.Server == "" {
-		eprintln("barfi: --server não configurado (use uma flag, variável de ambiente BARFI_SERVER, ou use o modo interativo)")
-		return 2
-	}
-
-	var partSize int64
-	if opts.partSizeStr != "" {
-		n, perr := parseSize(opts.partSizeStr)
-		if perr != nil {
-			eprintln("barfi:", perr)
-			return 2
-		}
-		if n < MinPartSize {
-			if !opts.quiet {
-				eprintf("barfi: --part-size %s abaixo do mínimo, usando %s\n", opts.partSizeStr, humanSize(MinPartSize))
-			}
-			n = MinPartSize
-		}
-		if n > MaxPartSize {
-			if !opts.quiet {
-				eprintf("barfi: --part-size %s acima do máximo, usando %s\n", opts.partSizeStr, humanSize(MaxPartSize))
-			}
-			n = MaxPartSize
-		}
-		partSize = n
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	filesToUpload, err := expandFiles(opts.files, opts.recursive)
-	if err != nil {
-		eprintln("barfi:", err)
-		return 2
-	}
-
-	if len(filesToUpload) == 0 {
-		eprintln("barfi: nenhum arquivo encontrado para upload.")
-		return 2
-	}
-
-	type failedUpload struct {
-		path string
-		err  error
-	}
-	var failed []failedUpload
-	var successCount int
-
-	for len(filesToUpload) > 0 {
-		var retryFiles []string
-
-		for i, filePath := range filesToUpload {
-			if !opts.quiet {
-				if len(filesToUpload) > 1 {
-					eprintf("\n=== Fazendo upload de %d de %d: %s ===\n", i+1, len(filesToUpload), filePath)
+	fromInteractive := len(opts.files) == 0 && !opts.save
+	for {
+		if len(opts.files) == 0 && !opts.save {
+			err := runInteractiveMode(opts, &mCfg, &cfg)
+			if err != nil {
+				if errors.Is(err, huh.ErrUserAborted) {
+					return 0
 				}
+				eprintln("barfi: erro no modo interativo:", err)
+				return 2
 			}
-
-			f, err := os.Open(filePath)
-			if err != nil {
-				eprintf("barfi erro ao abrir %s: %v\n", filePath, err)
-				failed = append(failed, failedUpload{filePath, err})
-				continue
+			if len(opts.files) == 0 {
+				return 0
 			}
+		} else if opts.note == "" {
+			// Caso não seja interativo e não tenha passado nota por flag, usa a do perfil
+			opts.note = cfg.DefaultNote
+		}
 
-			st, err := f.Stat()
-			if err != nil {
+		if opts.save {
+			mCfg.Profiles[mCfg.ActiveProfile] = cfg
+			path, perr := defaultConfigPath()
+			if perr != nil {
+				eprintln("barfi:", perr)
+				return 2
+			}
+			if err := saveConfig(path, mCfg); err != nil {
+				eprintln("barfi:", err)
+				return 2
+			}
+			if cfg.Token != "" && !opts.quiet {
+				eprintf("barfi: perfil %q atualizado em %s (modo 0600)\n", mCfg.ActiveProfile, path)
+			}
+			if len(opts.files) == 0 {
+				return 0
+			}
+		}
+
+		if len(opts.files) == 0 {
+			eprintln("barfi: nenhum arquivo selecionado (use --help para ajuda)")
+			return 2
+		}
+		if cfg.Server == "" {
+			eprintln("barfi: --server não configurado (use uma flag, variável de ambiente BARFI_SERVER, ou use o modo interativo)")
+			return 2
+		}
+
+		var partSize int64
+		if opts.partSizeStr != "" {
+			n, perr := parseSize(opts.partSizeStr)
+			if perr != nil {
+				eprintln("barfi:", perr)
+				return 2
+			}
+			if n < MinPartSize {
+				if !opts.quiet {
+					eprintf("barfi: --part-size %s abaixo do mínimo, usando %s\n", opts.partSizeStr, humanSize(MinPartSize))
+				}
+				n = MinPartSize
+			}
+			if n > MaxPartSize {
+				if !opts.quiet {
+					eprintf("barfi: --part-size %s acima do máximo, usando %s\n", opts.partSizeStr, humanSize(MaxPartSize))
+				}
+				n = MaxPartSize
+			}
+			partSize = n
+		}
+
+		filesToUpload, err := expandFiles(opts.files, opts.recursive)
+		if err != nil {
+			eprintln("barfi:", err)
+			return 2
+		}
+
+		if len(filesToUpload) == 0 {
+			eprintln("barfi: nenhum arquivo encontrado para upload.")
+			return 2
+		}
+
+		type failedUpload struct {
+			path string
+			err  error
+		}
+		var failed []failedUpload
+		var successCount int
+
+		for len(filesToUpload) > 0 {
+			var retryFiles []string
+
+			for i, filePath := range filesToUpload {
+				if !opts.quiet {
+					if len(filesToUpload) > 1 {
+						eprintf("\n=== Fazendo upload de %d de %d: %s ===\n", i+1, len(filesToUpload), filePath)
+					}
+				}
+
+				f, err := os.Open(filePath)
+				if err != nil {
+					eprintf("barfi erro ao abrir %s: %v\n", filePath, err)
+					failed = append(failed, failedUpload{filePath, err})
+					continue
+				}
+
+				st, err := f.Stat()
+				if err != nil {
+					f.Close()
+					eprintf("barfi erro lendo status de %s: %v\n", filePath, err)
+					failed = append(failed, failedUpload{filePath, err})
+					continue
+				}
+
+				fileSize := st.Size()
+				fileName := filepathBase(filePath)
+				server := strings.TrimRight(cfg.Server, "/")
+
+				effectivePartSize := partSize
+				if effectivePartSize == 0 {
+					effectivePartSize = calcPartSize(fileSize)
+				}
+				totalParts := (fileSize + effectivePartSize - 1) / effectivePartSize
+
+				if !opts.quiet {
+					eprintf("arquivo:     %s (%s)\n", fileName, humanSize(fileSize))
+					eprintf("servidor:    %s\n", server)
+					eprintf("partes:      %d x %s\n", totalParts, humanSize(effectivePartSize))
+					eprintf("workers:     %d\n", cfg.Workers)
+					if cfg.ParentId != "" {
+						eprintf("diretório:   %s\n", cfg.ParentId)
+					}
+					if opts.guestLink != "" {
+						eprintf("link convid: %s\n", opts.guestLink)
+					}
+					if cfg.LocationId != "" {
+						eprintf("localização: %s\n", cfg.LocationId)
+					}
+				}
+
+				u := &Uploader{
+					file:        f,
+					fileSize:    fileSize,
+					fileName:    fileName,
+					server:      server,
+					token:       cfg.Token,
+					locationId:  cfg.LocationId,
+					parentId:    cfg.ParentId,
+					guestLinkId: opts.guestLink,
+					note:        opts.note,
+					partSize:    partSize,
+					workers:     cfg.Workers,
+					httpClient:  &http.Client{Timeout: 0},
+					progress:    newProgress(opts.quiet, fileName),
+				}
+
+				start := time.Now()
+				result, err := u.run(ctx)
 				f.Close()
-				eprintf("barfi erro lendo status de %s: %v\n", filePath, err)
-				failed = append(failed, failedUpload{filePath, err})
-				continue
-			}
 
-			fileSize := st.Size()
-			fileName := filepathBase(filePath)
-			server := strings.TrimRight(cfg.Server, "/")
+				if err != nil {
+					if errors.Is(err, context.Canceled) {
+						eprintln("barfi: cancelado")
+						return 130
+					}
 
-			effectivePartSize := partSize
-			if effectivePartSize == 0 {
-				effectivePartSize = calcPartSize(fileSize)
-			}
-			totalParts := (fileSize + effectivePartSize - 1) / effectivePartSize
-
-			if !opts.quiet {
-				eprintf("arquivo:     %s (%s)\n", fileName, humanSize(fileSize))
-				eprintf("servidor:    %s\n", server)
-				eprintf("partes:      %d x %s\n", totalParts, humanSize(effectivePartSize))
-				eprintf("workers:     %d\n", cfg.Workers)
-				if cfg.ParentId != "" {
-					eprintf("diretório:   %s\n", cfg.ParentId)
-				}
-				if opts.guestLink != "" {
-					eprintf("link convid: %s\n", opts.guestLink)
-				}
-				if cfg.LocationId != "" {
-					eprintf("localização: %s\n", cfg.LocationId)
-				}
-			}
-
-			u := &Uploader{
-				file:        f,
-				fileSize:    fileSize,
-				fileName:    fileName,
-				server:      server,
-				token:       cfg.Token,
-				locationId:  cfg.LocationId,
-				parentId:    cfg.ParentId,
-				guestLinkId: opts.guestLink,
-				note:        opts.note,
-				partSize:    partSize,
-				workers:     cfg.Workers,
-				httpClient:  &http.Client{Timeout: 0},
-				progress:    newProgress(opts.quiet, fileName),
-			}
-
-			start := time.Now()
-			result, err := u.run(ctx)
-			f.Close()
-
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					eprintln("barfi: cancelado")
-					return 130
+					eprintf("barfi falha no envio de %s\n", fileName)
+					formatError(err)
+					failed = append(failed, failedUpload{filePath, err})
+					continue
 				}
 
-				eprintf("barfi falha no envio de %s\n", fileName)
-				formatError(err)
-				failed = append(failed, failedUpload{filePath, err})
-				continue
-			}
-
-			successCount++
-			if !opts.quiet {
-				elapsed := time.Since(start)
-				var avgSpeed string
-				if secs := elapsed.Seconds(); secs > 0 {
-					avgSpeed = humanSize(int64(float64(u.fileSize)/secs)) + "/s"
+				successCount++
+				if !opts.quiet {
+					elapsed := time.Since(start)
+					var avgSpeed string
+					if secs := elapsed.Seconds(); secs > 0 {
+						avgSpeed = humanSize(int64(float64(u.fileSize)/secs)) + "/s"
+					}
+					eprintf("enviado %s (%s) em %s (%s)\n",
+						u.fileName, humanSize(u.fileSize), elapsed.Round(time.Second), avgSpeed)
 				}
-				eprintf("enviado %s (%s) em %s (%s)\n",
-					u.fileName, humanSize(u.fileSize), elapsed.Round(time.Second), avgSpeed)
-			}
-			if opts.jsonOutput {
-				var buf bytes.Buffer
-				if err := json.Indent(&buf, result.rawJSON, "", "  "); err != nil {
-					fmt.Println(string(result.rawJSON))
+				if opts.jsonOutput {
+					var buf bytes.Buffer
+					if err := json.Indent(&buf, result.rawJSON, "", "  "); err != nil {
+						fmt.Println(string(result.rawJSON))
+					} else {
+						fmt.Println(buf.String())
+					}
 				} else {
-					fmt.Println(buf.String())
+					fmt.Println(result.link)
 				}
-			} else {
-				fmt.Println(result.link)
-			}
-		}
-
-		if len(failed) > 0 {
-			eprintf("\nResumo do Lote:\n")
-			eprintf("  Sucesso: %d\n", successCount)
-			eprintf("  Falhas:  %d\n", len(failed))
-
-			for _, f := range failed {
-				eprintf("    - %s (%v)\n", f.path, f.err)
 			}
 
-			// Se estamos no TTY (ou foi via modo interativo), pergunta sobre retentativas.
-			// Verifica se pode usar modo interativo com isatty. No momento vamos assumir que pode usar huh
-			var retry bool
-			form := huh.NewForm(
-				huh.NewGroup(
-					huh.NewConfirm().
-						Title(fmt.Sprintf("Deseja tentar enviar novamente os %d arquivos que falharam?", len(failed))).
-						Value(&retry),
-				),
-			)
-			_ = form.Run()
+			if len(failed) > 0 {
+				eprintf("\nResumo do Lote:\n")
+				eprintf("  Sucesso: %d\n", successCount)
+				eprintf("  Falhas:  %d\n", len(failed))
 
-			if retry {
 				for _, f := range failed {
-					retryFiles = append(retryFiles, f.path)
+					eprintf("    - %s (%v)\n", f.path, f.err)
 				}
-				failed = nil // reset falhas pra proxima rodada
-				filesToUpload = retryFiles
-				continue // tenta rodar novamente só os retryFiles
-			} else {
-				return 1 // Saída com erro indicando falhas no lote final
-			}
-		} else {
-			if len(filesToUpload) > 1 {
-				eprintf("\nLote finalizado com sucesso! %d arquivos enviados.\n", successCount)
-			}
-			break
-		}
-	}
 
-	return 0
+				var retry bool
+				form := huh.NewForm(
+					huh.NewGroup(
+						huh.NewConfirm().
+							Title(fmt.Sprintf("Deseja tentar enviar novamente os %d arquivos que falharam?", len(failed))).
+							Value(&retry),
+					),
+				)
+				_ = form.Run()
+
+				if retry {
+					for _, f := range failed {
+						retryFiles = append(retryFiles, f.path)
+					}
+					failed = nil
+					filesToUpload = retryFiles
+					continue
+				} else {
+					return 1
+				}
+			} else {
+				if len(filesToUpload) > 1 {
+					eprintf("\nLote finalizado com sucesso! %d arquivos enviados.\n", successCount)
+				}
+				break
+			}
+		}
+
+		if !fromInteractive {
+			return 0
+		}
+		// Volta ao menu principal após upload concluído no modo interativo.
+		opts.files = nil
+		opts.note = ""
+		cfg = mCfg.Profiles[mCfg.ActiveProfile]
+	}
 }
 
 func runConfig(action string, args []string) int {

@@ -156,6 +156,8 @@ Chaves válidas para `--config set/unset`: `server`, `token`, `locationId`, `par
 
 Configs antigas no formato plano (pré-0.1.0) são migradas automaticamente para o formato de perfis no primeiro carregamento.
 
+**Segurança do token**: o token de autenticação é criptografado em repouso com AES-256-GCM usando uma chave derivada de identificadores da máquina e do usuário. Copiar o arquivo de config para outra máquina invalida o token armazenado — o usuário será instruído a reconfigurar com `barfi --config set token SEU_TOKEN`.
+
 ---
 
 ### Códigos de saída
@@ -168,6 +170,15 @@ Configs antigas no formato plano (pré-0.1.0) são migradas automaticamente para
 | `130` | Interrompido (Ctrl+C) |
 
 ---
+
+### Releases
+
+Binários pré-compilados para Linux (amd64, arm64) e Windows (amd64) são gerados e publicados automaticamente na [página de releases](https://github.com/Jhoorodre/barfi/releases) ao criar uma tag de versão (`v*.*.*`). Para publicar uma nova versão:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
 
 ### Referência da API
 

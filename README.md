@@ -156,6 +156,8 @@ Valid keys for `--config set/unset`: `server`, `token`, `locationId`, `parentId`
 
 Old flat configs (pre-0.1.0) are automatically migrated to profile format on first load.
 
+**Token security**: the authentication token is encrypted at rest using AES-256-GCM with a key derived from machine and user identifiers. Copying the config file to another machine will invalidate the stored token — the user will be prompted to reconfigure with `barfi --config set token YOUR_TOKEN`.
+
 ---
 
 ### Exit codes
@@ -168,6 +170,15 @@ Old flat configs (pre-0.1.0) are automatically migrated to profile format on fir
 | `130` | Interrupted (Ctrl+C) |
 
 ---
+
+### Releases
+
+Pre-built binaries for Linux (amd64, arm64) and Windows (amd64) are automatically built and published to the [releases page](https://github.com/Jhoorodre/barfi/releases) when a version tag (`v*.*.*`) is pushed. To trigger a release, create and push a tag:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
 
 ### API reference
 
