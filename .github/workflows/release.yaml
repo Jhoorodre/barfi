@@ -2,33 +2,28 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: ["main"]
 
 permissions:
   contents: write
 
 jobs:
-  fmt-check:
-    name: Format check
+  ci:
+    name: Fmt + Test + Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
-      - name: Check formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "Files not formatted (run go fmt ./...):"
-            echo "$unformatted"
-            exit 1
-          fi
+      - name: Permissão do script
+        run: chmod +x scripts/build.sh
+      - name: CI via build.sh
+        run: ./scripts/build.sh
 
-  build:
-    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: fmt-check
+  release:
+    name: Build binários e publicar release
+    needs: ci
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -47,7 +42,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23"
-      - name: Build
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -59,9 +54,9 @@ jobs:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
-  release:
-    name: Create release
-    needs: build
+  publish:
+    name: Publicar release
+    needs: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -70,8 +65,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Create GitHub Release
+      - name: Criar ou atualizar release "latest"
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: latest
+          name: "Última versão (main)"
           files: dist/*
           generate_release_notes: true
+          prerelease: true

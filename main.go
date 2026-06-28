@@ -243,9 +243,6 @@ func runCLI(args []string) int {
 		return 2
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	fromInteractive := len(opts.files) == 0 && !opts.save
 	for {
 		if len(opts.files) == 0 && !opts.save {
@@ -325,6 +322,12 @@ func runCLI(args []string) int {
 			eprintln("barfi: nenhum arquivo encontrado para upload.")
 			return 2
 		}
+
+		// Cria um contexto cancelável fresco para este lote de upload.
+		// Precisa ser por iteração do loop externo para que Ctrl+C no modo
+		// interativo volte ao menu em vez de fechar o programa.
+		ctx, stopCtx := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		var interrupted bool
 
 		type failedUpload struct {
 			path string
@@ -406,7 +409,12 @@ func runCLI(args []string) int {
 
 				if err != nil {
 					if errors.Is(err, context.Canceled) {
+						stopCtx()
 						eprintln("barfi: cancelado")
+						if fromInteractive {
+							interrupted = true
+							break
+						}
 						return 130
 					}
 
@@ -475,6 +483,7 @@ func runCLI(args []string) int {
 					if fromInteractive {
 						break // volta ao menu em vez de encerrar
 					}
+					stopCtx()
 					return 1
 				}
 			} else {
@@ -485,6 +494,13 @@ func runCLI(args []string) int {
 			}
 		}
 
+		stopCtx()
+		if interrupted {
+			opts.files = nil
+			opts.note = ""
+			cfg = mCfg.Profiles[mCfg.ActiveProfile]
+			continue
+		}
 		if !fromInteractive {
 			return 0
 		}

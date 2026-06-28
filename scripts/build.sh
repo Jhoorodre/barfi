@@ -14,8 +14,8 @@ fi
 echo "→ Rodando testes..."
 go test ./...
 
-# Build local (Linux, binário no diretório do projeto)
-echo "→ Build..."
+# Build local (Linux amd64)
+echo "→ Build local..."
 CGO_ENABLED=0 go build -ldflags="-s -w" -o barfi ./
 
 echo "✓ OK — binário gerado: ./barfi"
