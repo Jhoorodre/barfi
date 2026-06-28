@@ -88,6 +88,21 @@ func loadConfig(path string) (MultiConfig, error) {
 		_ = saveConfig(path, mCfg)
 	}
 
+	// Decrypt tokens after loading.
+	for name, cfg := range mCfg.Profiles {
+		if cfg.Token == "" {
+			continue
+		}
+		plain, err := decryptToken(cfg.Token)
+		if err != nil {
+			eprintln("barfi: aviso: token do perfil \""+name+"\" não pôde ser descriptografado — reconfigure com: barfi --config set token SEU_TOKEN")
+			cfg.Token = ""
+		} else {
+			cfg.Token = plain
+		}
+		mCfg.Profiles[name] = cfg
+	}
+
 	return mCfg, nil
 }
 
@@ -96,7 +111,19 @@ func saveConfig(path string, mCfg MultiConfig) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	data, err := json.MarshalIndent(mCfg, "", "  ")
+
+	// Encrypt tokens in a copy so the in-memory mCfg is never mutated.
+	safe := MultiConfig{ActiveProfile: mCfg.ActiveProfile, Profiles: make(map[string]Config, len(mCfg.Profiles))}
+	for name, cfg := range mCfg.Profiles {
+		if cfg.Token != "" {
+			if enc, err := encryptToken(cfg.Token); err == nil {
+				cfg.Token = enc
+			}
+		}
+		safe.Profiles[name] = cfg
+	}
+
+	data, err := json.MarshalIndent(safe, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
