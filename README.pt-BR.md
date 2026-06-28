@@ -145,8 +145,8 @@ barfi --config show
 barfi --config set server https://buzzheavier.com
 barfi --config set token SEU_TOKEN
 barfi --config set workers 10
-barfi --config set parent-id ID_DA_PASTA      # pasta de destino padrão
-barfi --config set location-id ID_DO_BUCKET   # bucket de armazenamento padrão
+barfi --config set parentId ID_DA_PASTA        # pasta de destino padrão
+barfi --config set locationId ID_DO_BUCKET     # bucket de armazenamento padrão
 barfi --config unset token
 ```
 
@@ -166,3 +166,9 @@ Configs antigas no formato plano (pré-0.1.0) são migradas automaticamente para
 | `1` | Falha no upload |
 | `2` | Erro de uso |
 | `130` | Interrompido (Ctrl+C) |
+
+---
+
+### Referência da API
+
+[docs/buzzheavier-api.md](docs/buzzheavier-api.md) — referência completa da API buzzheavier.com (endpoints, parâmetros, exemplos curl, discrepâncias conhecidas).

@@ -145,8 +145,8 @@ barfi --config show
 barfi --config set server https://buzzheavier.com
 barfi --config set token YOUR_TOKEN
 barfi --config set workers 10
-barfi --config set parent-id FOLDER_ID     # default destination folder
-barfi --config set location-id BUCKET_ID   # default storage bucket
+barfi --config set parentId FOLDER_ID      # default destination folder
+barfi --config set locationId BUCKET_ID    # default storage bucket
 barfi --config unset token
 ```
 
@@ -166,3 +166,9 @@ Old flat configs (pre-0.1.0) are automatically migrated to profile format on fir
 | `1` | Upload failed |
 | `2` | Usage error |
 | `130` | Interrupted (Ctrl+C) |
+
+---
+
+### API reference
+
+[docs/buzzheavier-api.md](docs/buzzheavier-api.md) — full buzzheavier.com API reference (endpoints, parameters, curl examples, known discrepancies).
