@@ -17,17 +17,17 @@
 ### Installation
 
 ```bash
-go install github.com/burritoflakes/barfi@latest
+go install github.com/Jhoorodre/barfi@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/burritoflakes/barfi
+git clone https://github.com/Jhoorodre/barfi
 cd barfi && CGO_ENABLED=0 go build -ldflags="-s -w" -o barfi ./
 ```
 
-Pre-built binaries are available for Linux (amd64, arm64) on the [releases page](https://github.com/burritoflakes/barfi/releases).
+Pre-built binaries are available for Linux (amd64, arm64) on the [releases page](https://github.com/Jhoorodre/barfi/releases).
 macOS and Windows users must build from source.
 
 > Requires Go 1.23.0 or later.
