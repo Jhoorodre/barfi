@@ -10,7 +10,7 @@
 
 > Command-line file uploader for [buzzheavier.com](https://buzzheavier.com)
 
-[Leia em Português](README)
+[🇺🇸 English](README.md) | [🇧🇷 Português](README.pt-BR.md)
 
 ---
 

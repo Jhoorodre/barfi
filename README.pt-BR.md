@@ -1,0 +1,144 @@
+```
+########     ###    ########  ######## ####
+##     ##   ## ##   ##     ## ##        ##
+##     ##  ##   ##  ##     ## ##        ##
+########  ##     ## ########  ######    ##
+##     ## ######### ##   ##   ##        ##
+##     ## ##     ## ##    ##  ##        ##
+########  ##     ## ##     ## ##       ####
+```
+
+> Uploader de linha de comando para [buzzheavier.com](https://buzzheavier.com)
+
+[🇺🇸 English](README.md) | [🇧🇷 Português](README.pt-BR.md)
+
+---
+
+### Instalação
+
+```bash
+go install github.com/burritoflakes/barfi@latest
+```
+
+Ou compilar da fonte:
+
+```bash
+git clone https://github.com/burritoflakes/barfi
+cd barfi && CGO_ENABLED=0 go build -ldflags="-s -w" -o barfi ./
+```
+
+Binários pré-compilados estão disponíveis para Linux (amd64, arm64) nas [releases](https://github.com/burritoflakes/barfi/releases).
+macOS e Windows precisam compilar da fonte.
+
+> Requer Go 1.23.0 ou superior.
+
+---
+
+### Configuração inicial
+
+```bash
+barfi --config set server https://buzzheavier.com
+barfi --config set token SEU_TOKEN
+barfi --config set workers 5
+barfi --config show
+```
+
+---
+
+### Uso básico
+
+```bash
+# Enviar um arquivo
+barfi arquivo.txt
+
+# Enviar para uma pasta específica
+barfi --parent-id=ID_DA_PASTA arquivo.txt
+
+# Enviar vários arquivos de uma vez
+barfi foto1.jpg foto2.jpg video.mp4
+
+# Enviar todos os arquivos de um diretório (recursivo)
+barfi -r ./minha-pasta/
+
+# Enviar com uma nota
+barfi --note="versão final" arquivo.zip
+
+# Enviar via link de convidado
+barfi --guest-upload-link-id=ID_DO_LINK arquivo.txt
+
+# Capturar o link em um script
+LINK=$(barfi -q arquivo.txt)
+```
+
+---
+
+### Modo interativo
+
+Execute `barfi` sem argumentos para abrir o modo interativo com TUI completa:
+
+```bash
+barfi
+```
+
+O modo interativo oferece:
+
+- **Enviar arquivos** — seleção de arquivos e pastas de destino via menus
+- **Gerenciar Buzzheavier** — navegue, crie, renomeie, mova e exclua pastas no servidor; gerencie favoritos; edite notas de arquivos; delete em lote
+- **Biblioteca** — vincule pastas locais a pastas remotas para envios recorrentes com preview de conteúdo; sincronize com o servidor
+- **Gerenciar Perfis** — crie e alterne entre múltiplos perfis de configuração (ex: conta pessoal e conta de trabalho)
+
+---
+
+### Referência de flags
+
+| Flag | Atalho | Descrição |
+|------|--------|-----------|
+| `--server URL` | | URL base do servidor |
+| `--token T` | | Token de autenticação |
+| `--location-id ID` | `-l` | ID do bucket de armazenamento |
+| `--parent-id ID` | `-d` | ID da pasta de destino |
+| `--guest-upload-link-id ID` | | ID do link de convidado |
+| `--note TEXTO` | | Nota do upload (máx. 500 caracteres) |
+| `--part-size BYTES` | | Tamanho de cada parte (ex: `25MB`, padrão: `100MB`) |
+| `--workers N` | `-j` | Goroutines paralelas de upload (padrão: 5) |
+| `--recursive` | `-r` | Enviar diretórios recursivamente |
+| `--quiet` | `-q` | Silencia o progresso; imprime somente o link no stdout |
+| `--json` | | Imprime a resposta bruta do servidor como JSON |
+| `--save` | | Persiste as configurações atuais no arquivo de config |
+| `--config ACTION` | | Gerencia a config: `show`, `set`, `unset` |
+| `--version` | | Exibe a versão |
+| `--help` | `-h` | Exibe a ajuda |
+
+Variáveis de ambiente: `BARFI_SERVER`, `BARFI_TOKEN`, `BARFI_LOCATION_ID`.
+
+Precedência: flags > variáveis de ambiente > arquivo de config.
+
+---
+
+### Configuração
+
+Armazenada em `~/.config/barfi/config.json` (modo `0600`).
+
+```bash
+barfi --config show                               # Exibe config atual
+barfi --config set server https://buzzheavier.com
+barfi --config set token SEU_TOKEN
+barfi --config set workers 10
+barfi --config set parent-id ID_DA_PASTA          # Pasta padrão
+barfi --config unset token                        # Remove uma chave
+```
+
+Chaves válidas: `server`, `token`, `locationId`, `parentId`, `workers`.
+
+**Múltiplos perfis** são gerenciados pelo modo interativo. Use o menu "Gerenciar Perfis" para criar, editar, alternar e excluir perfis.
+
+---
+
+### Códigos de saída
+
+| Código | Significado |
+|--------|-------------|
+| `0` | Sucesso |
+| `1` | Falha no upload |
+| `2` | Erro de uso |
+| `130` | Interrompido (Ctrl+C) |
