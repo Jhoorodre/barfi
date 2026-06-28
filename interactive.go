@@ -1168,7 +1168,7 @@ func obraUpload(cliOpts *cliOptions, cfg *Config, obra LibraryItem, cachedEntrie
 		var selected []string
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewMultiSelect[string]().
-				Title("Selecionar de: "+obra.Name).
+				Title("Selecionar de: " + obra.Name).
 				Description("Espaço para marcar, enter para confirmar.").
 				Options(entryOpts...).
 				Value(&selected),
@@ -1376,7 +1376,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			subOpts = append(subOpts, huh.NewOption("← Voltar", "back"))
 			if err := huh.NewForm(huh.NewGroup(
 				huh.NewSelect[string]().
-					Title("[obra] "+item.Name).
+					Title("[obra] " + item.Name).
 					Description(contentDesc).
 					Options(subOpts...).
 					Value(&libAction),

@@ -95,7 +95,7 @@ func loadConfig(path string) (MultiConfig, error) {
 		}
 		plain, err := decryptToken(cfg.Token)
 		if err != nil {
-			eprintln("barfi: aviso: token do perfil \""+name+"\" não pôde ser descriptografado — reconfigure com: barfi --config set token SEU_TOKEN")
+			eprintln("barfi: aviso: token do perfil \"" + name + "\" não pôde ser descriptografado — reconfigure com: barfi --config set token SEU_TOKEN")
 			cfg.Token = ""
 		} else {
 			cfg.Token = plain
