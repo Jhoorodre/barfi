@@ -1751,11 +1751,10 @@ func generateReport(cfg *Config, profileName string) (string, error) {
 	safeName := strings.NewReplacer(" ", "-", "/", "-", "\\", "-").Replace(profileName)
 	basename := fmt.Sprintf("barfi-report-%s-%s.txt", safeName, now.Format("20060102-150405"))
 
-	// No WSL2, salva na pasta do usuário Windows (USERPROFILE = C:\Users\...) para
-	// que o arquivo apareça diretamente no Explorer sem navegar pelo filesystem Linux.
+	// Salva no mesmo diretório do executável; cai para CWD se não conseguir.
 	var filename string
-	if winProfile := os.Getenv("USERPROFILE"); winProfile != "" {
-		filename = filepath.Join(normalizePath(winProfile), basename)
+	if exe, err := os.Executable(); err == nil {
+		filename = filepath.Join(filepath.Dir(exe), basename)
 	} else {
 		filename = basename
 	}
