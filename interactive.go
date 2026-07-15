@@ -1025,7 +1025,7 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 	for _, it := range serverItems {
 		if it.IsDirectory {
 			remoteIDs[it.ID] = true
-			remoteNames[it.Name] = true
+			remoteNames[normalizeFSName(it.Name)] = true
 		}
 	}
 	var missing []string
@@ -1036,7 +1036,7 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 		if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
 			continue
 		}
-		if remoteIDs[item.FolderID] || remoteNames[item.Name] {
+		if remoteIDs[item.FolderID] || remoteNames[normalizeFSName(item.Name)] {
 			continue
 		}
 		missing = append(missing, item.Name)
@@ -1061,15 +1061,15 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 			return err
 		}
 		if confirm {
-			serverFolders := make(map[string]string) // name → ID
+			serverFolders := make(map[string]string) // nome normalizado → ID
 			for _, item := range serverItems {
 				if item.IsDirectory {
-					serverFolders[item.Name] = item.ID
+					serverFolders[normalizeFSName(item.Name)] = item.ID
 				}
 			}
 			for _, name := range plan.addLocal {
 				var folderID string
-				if id, exists := serverFolders[name]; exists {
+				if id, exists := serverFolders[normalizeFSName(name)]; exists {
 					folderID = id
 					eprintf("barfi: ↔ %s (pasta existente vinculada)\n", name)
 				} else {
@@ -1110,7 +1110,7 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 			for _, f := range plan.importRemote {
 				cfg.Library = append(cfg.Library, LibraryItem{
 					Name:      f.Name,
-					LocalPath: filepath.Join(basePath, f.Name),
+					LocalPath: filepath.Join(basePath, normalizeFSName(f.Name)),
 					FolderID:  f.ID,
 				})
 				eprintf("barfi: ↓ %s (importada do servidor)\n", f.Name)
@@ -1517,10 +1517,11 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			if remoteOK {
 				localSet := make(map[string]bool, len(localNames))
 				for _, n := range localNames {
-					localSet[n] = true
+					localSet[normKey(n)] = true
 				}
 				for _, bi := range remoteItems {
-					if !bi.IsDirectory && !localSet[bi.Name] && safeRemoteName(bi.Name) {
+					if !bi.IsDirectory && !localSet[normalizeFSName(bi.Name)] &&
+						safeRemoteName(bi.Name) && normalizeFSName(bi.Name) != "" {
 						missingDownload = append(missingDownload, bi)
 					}
 				}
@@ -1582,15 +1583,16 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				// (mesmo padrão do relatório — funciona no Linux e via .bat no WSL2).
 				destDir := item.LocalPath
 				if destDir == "" {
-					destDir = filepath.Join("download", item.Name)
+					destDir = filepath.Join("download", normalizeFSName(item.Name))
 					if exe, err := os.Executable(); err == nil {
-						destDir = filepath.Join(filepath.Dir(exe), "download", item.Name)
+						destDir = filepath.Join(filepath.Dir(exe), "download", normalizeFSName(item.Name))
 					}
 				}
 				failed := 0
 				for i, bi := range missingDownload {
 					eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(missingDownload), bi.Name)
-					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(destDir, bi.Name)); err != nil {
+					// Nome saneado: ":" e afins não podem existir no disco (Windows//mnt)
+					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(destDir, normalizeFSName(bi.Name))); err != nil {
 						eprintln("erro:", err)
 						failed++
 						continue

@@ -50,6 +50,46 @@ func TestDiffNames(t *testing.T) {
 	}
 }
 
+func TestNormalizeFSName(t *testing.T) {
+	for in, want := range map[string]string{
+		"Tower of God: Parte 2 – O Retorno do Príncipe": "Tower of God Parte 2 – O Retorno do Príncipe",
+		"cap-01.cbz":        "cap-01.cbz",
+		`a<b>c:d"e|f?g*`:    "abcdefg",
+		" nome com borda. ": "nome com borda",
+		"..":                "",
+	} {
+		if got := normalizeFSName(in); got != want {
+			t.Errorf("normalizeFSName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDiffNamesNormalizaWindows(t *testing.T) {
+	d := diffNames(
+		[]string{"Cap 01.cbz", "EXTRA/"},
+		[]string{"Cap: 01.cbz", "EXTRA/", "Cap: 02.cbz"},
+	)
+	if len(d.both) != 2 || len(d.localOnly) != 0 {
+		t.Errorf("both = %v, localOnly = %v; esperava casar ignorando ':'", d.both, d.localOnly)
+	}
+	if len(d.remoteOnly) != 1 || d.remoteOnly[0] != "Cap: 02.cbz" {
+		t.Errorf("remoteOnly = %v", d.remoteOnly)
+	}
+}
+
+func TestBuildSyncPlanNormalizaWindows(t *testing.T) {
+	// Pasta local sem ":" (proibido no Windows) deve casar com a remota com ":".
+	localDirs := []string{"Tower of God Parte 2"}
+	remoteFolders := []fsItem{{ID: "id2", Name: "Tower of God: Parte 2", IsDirectory: true}}
+	plan := buildSyncPlan(nil, localDirs, remoteFolders)
+	if len(plan.importRemote) != 0 {
+		t.Errorf("importRemote = %+v; pasta remota já coberta pela local homônima", plan.importRemote)
+	}
+	if len(plan.addLocal) != 1 {
+		t.Errorf("addLocal = %v; a pasta local deve entrar (e vincular por nome normalizado)", plan.addLocal)
+	}
+}
+
 func TestSafeRemoteName(t *testing.T) {
 	for name, want := range map[string]bool{
 		"cap-01.cbz":       true,

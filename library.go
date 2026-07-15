@@ -17,23 +17,23 @@ type libDiff struct {
 func diffNames(local, remote []string) libDiff {
 	remoteSet := make(map[string]bool, len(remote))
 	for _, r := range remote {
-		remoteSet[r] = true
+		remoteSet[normKey(r)] = true
 	}
 	localSet := make(map[string]bool, len(local))
 	for _, l := range local {
-		localSet[l] = true
+		localSet[normKey(l)] = true
 	}
 
 	var d libDiff
 	for _, l := range local {
-		if remoteSet[l] {
+		if remoteSet[normKey(l)] {
 			d.both = append(d.both, l)
 		} else {
 			d.localOnly = append(d.localOnly, l)
 		}
 	}
 	for _, r := range remote {
-		if !localSet[r] {
+		if !localSet[normKey(r)] {
 			d.remoteOnly = append(d.remoteOnly, r)
 		}
 	}
@@ -44,6 +44,30 @@ func diffNames(local, remote []string) libDiff {
 // nome de arquivo local sem escapar da pasta da obra (path traversal).
 func safeRemoteName(name string) bool {
 	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`)
+}
+
+// normalizeFSName reduz um nome à forma comparável entre sistemas de
+// arquivos: remove os caracteres proibidos no Windows (< > : " / \ | ? *)
+// e espaços/pontos nas bordas. O servidor aceita ":" mas o disco (Windows/
+// /mnt no WSL2) não — sem isso, "Obra: X" no servidor e "Obra X" no disco
+// parecem obras diferentes. Usado só para CASAR nomes, nunca para exibir.
+func normalizeFSName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		switch r {
+		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
+			return -1
+		}
+		return r
+	}, name)
+	return strings.Trim(name, " .")
+}
+
+// normKey normaliza preservando o sufixo "/" que marca diretórios no diff.
+func normKey(name string) string {
+	if strings.HasSuffix(name, "/") {
+		return normalizeFSName(strings.TrimSuffix(name, "/")) + "/"
+	}
+	return normalizeFSName(name)
 }
 
 // syncPlan é o que o sync bidirecional propõe fazer.
@@ -61,24 +85,24 @@ func buildSyncPlan(library []LibraryItem, localDirs []string, remoteFolders []fs
 	libNames := make(map[string]bool, len(library))
 	libFolderIDs := make(map[string]bool, len(library))
 	for _, item := range library {
-		libNames[item.Name] = true
+		libNames[normalizeFSName(item.Name)] = true
 		if item.FolderID != "" {
 			libFolderIDs[item.FolderID] = true
 		}
 	}
 	localSet := make(map[string]bool, len(localDirs))
 	for _, name := range localDirs {
-		localSet[name] = true
+		localSet[normalizeFSName(name)] = true
 	}
 
 	var plan syncPlan
 	for _, name := range localDirs {
-		if !libNames[name] {
+		if !libNames[normalizeFSName(name)] {
 			plan.addLocal = append(plan.addLocal, name)
 		}
 	}
 	for _, f := range remoteFolders {
-		if !f.IsDirectory || libNames[f.Name] || libFolderIDs[f.ID] || localSet[f.Name] {
+		if !f.IsDirectory || libNames[normalizeFSName(f.Name)] || libFolderIDs[f.ID] || localSet[normalizeFSName(f.Name)] {
 			continue
 		}
 		plan.importRemote = append(plan.importRemote, f)
