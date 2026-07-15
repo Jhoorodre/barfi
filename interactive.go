@@ -253,6 +253,9 @@ type fsItem struct {
 	IsDirectory bool   `json:"isDirectory"`
 }
 
+// errDirNotFound indica que a pasta não existe mais no servidor (404).
+var errDirNotFound = errors.New("pasta não existe no servidor")
+
 func listDirectory(server, token, dirID string) (items []fsItem, currentID string, err error) {
 	url := server + "/api/fs"
 	if dirID != "" {
@@ -270,6 +273,9 @@ func listDirectory(server, token, dirID string) (items []fsItem, currentID strin
 		return nil, "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, "", errDirNotFound
+	}
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("servidor retornou %d", resp.StatusCode)
 	}
@@ -986,35 +992,11 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 		return fmt.Errorf("ler caminho base: %w", err)
 	}
 
-	existing := make(map[string]bool)
-	for _, item := range cfg.Library {
-		existing[item.Name] = true
-	}
-
-	var toAdd []string
+	var localDirs []string
 	for _, e := range entries {
-		if e.IsDir() && !existing[e.Name()] {
-			toAdd = append(toAdd, e.Name())
+		if e.IsDir() {
+			localDirs = append(localDirs, e.Name())
 		}
-	}
-
-	if len(toAdd) == 0 {
-		eprintln("barfi: nenhuma obra nova encontrada em", basePath)
-		return nil
-	}
-
-	var confirm bool
-	preview := strings.Join(toAdd, "\n  ")
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewConfirm().
-			Title(fmt.Sprintf("%d nova(s) obra(s) encontrada(s)", len(toAdd))).
-			Description("Serão criadas no buzzheavier e adicionadas à biblioteca:\n  " + preview).
-			Value(&confirm),
-	)).Run(); err != nil {
-		return err
-	}
-	if !confirm {
-		return nil
 	}
 
 	server := strings.TrimRight(cfg.Server, "/")
@@ -1026,39 +1008,147 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 		}
 		parentID = rootID
 	}
-
 	serverItems, _, err := listDirectory(server, cfg.Token, parentID)
 	if err != nil {
 		return fmt.Errorf("listar pasta destino: %w", err)
 	}
-	serverFolders := make(map[string]string) // name → ID
-	for _, item := range serverItems {
-		if item.IsDirectory {
-			serverFolders[item.Name] = item.ID
+
+	plan := buildSyncPlan(cfg.Library, localDirs, serverItems)
+
+	// Obras órfãs: sem pasta no disco E sem pasta no servidor (na listagem
+	// da pasta padrão). Obra sem pasta local mas viva no servidor é o estado
+	// normal de uma importada — removê-la só faria o sync re-importar depois.
+	// ponytail: obra vinculada a pasta fora da pasta padrão pode ser falso
+	// positivo aqui; o confirm lista os nomes e a tela da obra trata o 404 real.
+	remoteIDs := make(map[string]bool, len(serverItems))
+	remoteNames := make(map[string]bool, len(serverItems))
+	for _, it := range serverItems {
+		if it.IsDirectory {
+			remoteIDs[it.ID] = true
+			remoteNames[it.Name] = true
+		}
+	}
+	var missing []string
+	for _, item := range cfg.Library {
+		if item.LocalPath == "" {
+			continue
+		}
+		if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
+			continue
+		}
+		if remoteIDs[item.FolderID] || remoteNames[item.Name] {
+			continue
+		}
+		missing = append(missing, item.Name)
+	}
+
+	if len(plan.addLocal) == 0 && len(plan.importRemote) == 0 && len(missing) == 0 {
+		eprintln("barfi: biblioteca em dia — nada para sincronizar")
+		return nil
+	}
+
+	changed := false
+
+	// 1) Disco → servidor: pastas locais novas.
+	if len(plan.addLocal) > 0 {
+		var confirm bool
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("%d nova(s) obra(s) no disco", len(plan.addLocal))).
+				Description("Serão criadas no buzzheavier e adicionadas à biblioteca:\n  " + strings.Join(plan.addLocal, "\n  ")).
+				Value(&confirm),
+		)).Run(); err != nil {
+			return err
+		}
+		if confirm {
+			serverFolders := make(map[string]string) // name → ID
+			for _, item := range serverItems {
+				if item.IsDirectory {
+					serverFolders[item.Name] = item.ID
+				}
+			}
+			for _, name := range plan.addLocal {
+				var folderID string
+				if id, exists := serverFolders[name]; exists {
+					folderID = id
+					eprintf("barfi: ↔ %s (pasta existente vinculada)\n", name)
+				} else {
+					id, err := createDirectory(server, cfg.Token, parentID, name)
+					if err != nil {
+						eprintln("barfi: criar pasta '"+name+"':", err)
+						continue
+					}
+					folderID = id
+					eprintf("barfi: ✓ %s\n", name)
+				}
+				cfg.Library = append(cfg.Library, LibraryItem{
+					Name:      name,
+					LocalPath: filepath.Join(basePath, name),
+					FolderID:  folderID,
+				})
+				changed = true
+			}
 		}
 	}
 
-	for _, name := range toAdd {
-		var folderID string
-		if id, exists := serverFolders[name]; exists {
-			folderID = id
-			eprintf("barfi: ↔ %s (pasta existente vinculada)\n", name)
-		} else {
-			id, err := createDirectory(server, cfg.Token, parentID, name)
-			if err != nil {
-				eprintln("barfi: criar pasta '"+name+"':", err)
-				continue
-			}
-			folderID = id
-			eprintf("barfi: ✓ %s\n", name)
+	// 2) Servidor → biblioteca: pastas remotas não vinculadas.
+	if len(plan.importRemote) > 0 {
+		var names []string
+		for _, f := range plan.importRemote {
+			names = append(names, f.Name)
 		}
-		cfg.Library = append(cfg.Library, LibraryItem{
-			Name:      name,
-			LocalPath: filepath.Join(basePath, name),
-			FolderID:  folderID,
-		})
+		var confirm bool
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("%d obra(s) só no buzzheavier", len(plan.importRemote))).
+				Description("Serão adicionadas à biblioteca (a pasta local NÃO é criada no disco):\n  " + strings.Join(names, "\n  ")).
+				Value(&confirm),
+		)).Run(); err != nil {
+			return err
+		}
+		if confirm {
+			for _, f := range plan.importRemote {
+				cfg.Library = append(cfg.Library, LibraryItem{
+					Name:      f.Name,
+					LocalPath: filepath.Join(basePath, f.Name),
+					FolderID:  f.ID,
+				})
+				eprintf("barfi: ↓ %s (importada do servidor)\n", f.Name)
+				changed = true
+			}
+		}
 	}
-	saveAndReloadCfg(mCfg, cfg)
+
+	// 3) Obras removidas do disco.
+	if len(missing) > 0 {
+		var confirm bool
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("%d obra(s) órfã(s) — sem pasta no disco nem no servidor", len(missing))).
+				Description("Remover da biblioteca? Nada é excluído no servidor:\n  " + strings.Join(missing, "\n  ")).
+				Value(&confirm),
+		)).Run(); err != nil {
+			return err
+		}
+		if confirm {
+			missingSet := make(map[string]bool, len(missing))
+			for _, name := range missing {
+				missingSet[name] = true
+			}
+			kept := cfg.Library[:0]
+			for _, item := range cfg.Library {
+				if !missingSet[item.Name] {
+					kept = append(kept, item)
+				}
+			}
+			cfg.Library = kept
+			changed = true
+		}
+	}
+
+	if changed {
+		saveAndReloadCfg(mCfg, cfg)
+	}
 	return nil
 }
 
@@ -1111,6 +1201,17 @@ func changeLibraryBasePath(cfg *Config, mCfg *MultiConfig) error {
 	cfg.LibraryBasePath = newBase
 	saveAndReloadCfg(mCfg, cfg)
 	return nil
+}
+
+// promptNote pede a nota do upload, pré-preenchida com a padrão do perfil.
+func promptNote(defaultNote string) (string, error) {
+	note := defaultNote
+	err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().Title("Nota (Opcional)").
+			Description("Pré-preenchida com a nota padrão do perfil. Apague para enviar sem nota.").
+			Value(&note),
+	)).Run()
+	return note, err
 }
 
 // obraUpload populates opts for uploading from a library obra.
@@ -1185,12 +1286,8 @@ func obraUpload(cliOpts *cliOptions, cfg *Config, obra LibraryItem, cachedEntrie
 		selectedPaths = selected
 	}
 
-	note := cfg.DefaultNote
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewInput().Title("Nota (Opcional)").
-			Description("Pré-preenchida com a nota padrão do perfil. Apague para enviar sem nota.").
-			Value(&note),
-	)).Run(); err != nil {
+	note, err := promptNote(cfg.DefaultNote)
+	if err != nil {
 		if !errors.Is(err, huh.ErrUserAborted) {
 			return err
 		}
@@ -1216,7 +1313,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			menuOpts = append(menuOpts, huh.NewOption("[favorito] "+f.Name, fmt.Sprintf("fav:%d", i)))
 		}
 		menuOpts = append(menuOpts, huh.NewOption("+ Adicionar obra à biblioteca", "__add__"))
-		menuOpts = append(menuOpts, huh.NewOption("⟳ Sincronizar com disco", "__sync__"))
+		menuOpts = append(menuOpts, huh.NewOption("⟳ Sincronizar (disco ↔ buzzheavier)", "__sync__"))
 		menuOpts = append(menuOpts, huh.NewOption("↪ Definir/Mudar caminho base", "__rebase__"))
 		menuOpts = append(menuOpts, huh.NewOption("← Voltar", "__back__"))
 
@@ -1319,57 +1416,109 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			}
 			item := cfg.Library[idx]
 
-			// Monta preview de conteúdo local e buzzheavier
+			// Monta preview comparando conteúdo local × buzzheavier.
+			// Pastas ganham sufixo "/" — o diff só casa pasta com pasta.
 			server := strings.TrimRight(cfg.Server, "/")
 			var contentLines []string
 			var localEntries []os.DirEntry // reutilizado em obraUpload para evitar leitura dupla
+			var localNames []string
+			localOK := false
 			if item.LocalPath != "" {
-				contentLines = append(contentLines, "📁 Local ("+item.LocalPath+"):")
 				if entries, err := os.ReadDir(item.LocalPath); err == nil {
 					localEntries = entries
-					shown := 0
+					localOK = true
 					for _, e := range entries {
-						if shown >= 15 {
-							contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", len(entries)-15))
-							break
-						}
-						prefix := "  [arquivo] "
+						name := e.Name()
 						if e.IsDir() {
-							prefix = "  [pasta]  "
+							name += "/"
 						}
-						contentLines = append(contentLines, prefix+e.Name())
-						shown++
+						localNames = append(localNames, name)
 					}
 				} else {
-					contentLines = append(contentLines, "  (erro lendo pasta: "+err.Error()+")")
+					contentLines = append(contentLines, "📁 Local: (erro lendo pasta: "+err.Error()+")")
 				}
 			}
+			var remoteNames []string
+			remoteOK := false
+			remoteGone := false
 			if item.FolderID != "" && cfg.Token != "" {
-				contentLines = append(contentLines, "☁ Buzzheavier:")
 				if buzzItems, _, err := listDirectory(server, cfg.Token, item.FolderID); err == nil {
-					shown := 0
+					remoteOK = true
 					for _, bi := range buzzItems {
-						if shown >= 15 {
-							contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", len(buzzItems)-15))
+						name := bi.Name
+						if bi.IsDirectory {
+							name += "/"
+						}
+						remoteNames = append(remoteNames, name)
+					}
+				} else if errors.Is(err, errDirNotFound) {
+					remoteGone = true
+					contentLines = append(contentLines, "⚠ A pasta desta obra não existe mais no buzzheavier.")
+				} else {
+					contentLines = append(contentLines, "☁ Buzzheavier: (erro: "+err.Error()+")")
+				}
+			}
+
+			var missingUpload []string // caminhos locais que faltam no servidor
+			const previewCap = 15
+			switch {
+			case localOK && remoteOK:
+				d := diffNames(localNames, remoteNames)
+				contentLines = append(contentLines, fmt.Sprintf(
+					"✓ %d sincronizado(s)   ↑ %d só no disco   ↓ %d só no buzzheavier",
+					len(d.both), len(d.localOnly), len(d.remoteOnly)))
+				shown := 0
+				total := len(d.localOnly) + len(d.remoteOnly) + len(d.both)
+				for _, group := range []struct {
+					mark  string
+					names []string
+				}{{"↑", d.localOnly}, {"↓", d.remoteOnly}, {"✓", d.both}} {
+					for _, n := range group.names {
+						if shown >= previewCap {
 							break
 						}
-						prefix := "  [arquivo] "
-						if bi.IsDirectory {
-							prefix = "  [pasta]  "
-						}
-						contentLines = append(contentLines, prefix+bi.Name)
+						contentLines = append(contentLines, "  "+group.mark+" "+n)
 						shown++
 					}
-				} else {
-					contentLines = append(contentLines, "  (erro: "+err.Error()+")")
+				}
+				if total > shown {
+					contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", total-shown))
+				}
+				for _, n := range d.localOnly {
+					missingUpload = append(missingUpload, filepath.Join(item.LocalPath, strings.TrimSuffix(n, "/")))
+				}
+			case localOK:
+				contentLines = append(contentLines, "📁 Local ("+item.LocalPath+"):")
+				for i, n := range localNames {
+					if i >= previewCap {
+						contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", len(localNames)-previewCap))
+						break
+					}
+					contentLines = append(contentLines, "  "+n)
+				}
+			case remoteOK:
+				contentLines = append(contentLines, "☁ Buzzheavier:")
+				for i, n := range remoteNames {
+					if i >= previewCap {
+						contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", len(remoteNames)-previewCap))
+						break
+					}
+					contentLines = append(contentLines, "  "+n)
 				}
 			}
 			contentDesc := strings.Join(contentLines, "\n")
 
 			var libAction string
 			var subOpts []huh.Option[string]
-			if item.LocalPath != "" {
+			if len(missingUpload) > 0 {
+				subOpts = append(subOpts, huh.NewOption(fmt.Sprintf("📤 Enviar faltantes (%d)", len(missingUpload)), "upload-missing"))
+			}
+			if item.LocalPath != "" && !remoteGone {
 				subOpts = append(subOpts, huh.NewOption("📤 Fazer upload", "upload"))
+			}
+			if remoteGone {
+				subOpts = append(subOpts, huh.NewOption("Recriar pasta no servidor", "recreate"))
+				subOpts = append(subOpts, huh.NewOption("Limpar vínculo remoto", "unlink"))
 			}
 			subOpts = append(subOpts, huh.NewOption("Editar", "edit"))
 			subOpts = append(subOpts, huh.NewOption("Excluir", "delete"))
@@ -1392,6 +1541,42 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				} else {
 					return nil // dispara upload no caller
 				}
+			case "upload-missing":
+				note, err := promptNote(cfg.DefaultNote)
+				if err != nil {
+					if !errors.Is(err, huh.ErrUserAborted) {
+						eprintln("barfi:", err)
+					}
+					continue
+				}
+				if item.FolderID != "" {
+					cfg.ParentId = item.FolderID
+				}
+				cliOpts.files = missingUpload
+				cliOpts.recursive = false
+				cliOpts.note = note
+				return nil // dispara upload no caller
+			case "recreate":
+				parentID := cfg.ParentId
+				if parentID == "" {
+					_, rootID, err := listDirectory(server, cfg.Token, "")
+					if err != nil {
+						eprintln("barfi: buscar raiz:", err)
+						continue
+					}
+					parentID = rootID
+				}
+				id, err := createDirectory(server, cfg.Token, parentID, item.Name)
+				if err != nil {
+					eprintln("barfi: recriar pasta:", err)
+					continue
+				}
+				cfg.Library[idx].FolderID = id
+				saveAndReloadCfg(mCfg, cfg)
+				eprintln("barfi: pasta recriada e vínculo atualizado")
+			case "unlink":
+				cfg.Library[idx].FolderID = ""
+				saveAndReloadCfg(mCfg, cfg)
 			case "edit":
 				folderLabel := "Nenhuma"
 				if cfg.Library[idx].FolderID != "" {
