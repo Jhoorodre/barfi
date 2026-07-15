@@ -1520,7 +1520,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 					localSet[n] = true
 				}
 				for _, bi := range remoteItems {
-					if !bi.IsDirectory && !localSet[bi.Name] {
+					if !bi.IsDirectory && !localSet[bi.Name] && safeRemoteName(bi.Name) {
 						missingDownload = append(missingDownload, bi)
 					}
 				}

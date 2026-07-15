@@ -50,6 +50,23 @@ func TestDiffNames(t *testing.T) {
 	}
 }
 
+func TestSafeRemoteName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"cap-01.cbz":       true,
+		"Cap 001 - A.cbz":  true,
+		"":                 false,
+		".":                false,
+		"..":               false,
+		"../../etc/passwd": false,
+		`..\..\x.exe`:      false,
+		"sub/arquivo.cbz":  false,
+	} {
+		if got := safeRemoteName(name); got != want {
+			t.Errorf("safeRemoteName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestBuildSyncPlan(t *testing.T) {
 	library := []LibraryItem{
 		{Name: "ObraA", FolderID: "idA"},

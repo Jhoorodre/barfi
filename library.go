@@ -3,6 +3,8 @@ package main
 // Lógica pura de comparação da biblioteca (local ↔ Buzzheavier).
 // Separada da TUI (interactive.go) para ser testável sem terminal.
 
+import "strings"
+
 // libDiff é o resultado da comparação de nomes entre o disco e o servidor.
 type libDiff struct {
 	both       []string // presentes nos dois lados (ordem local)
@@ -36,6 +38,12 @@ func diffNames(local, remote []string) libDiff {
 		}
 	}
 	return d
+}
+
+// safeRemoteName informa se um nome vindo do servidor pode ser usado como
+// nome de arquivo local sem escapar da pasta da obra (path traversal).
+func safeRemoteName(name string) bool {
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`)
 }
 
 // syncPlan é o que o sync bidirecional propõe fazer.
