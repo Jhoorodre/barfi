@@ -1514,7 +1514,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 
 			// Arquivos que existem só no buzzheavier (pastas remotas ficam de fora).
 			var missingDownload []fsItem
-			if remoteOK && item.LocalPath != "" {
+			if remoteOK {
 				localSet := make(map[string]bool, len(localNames))
 				for _, n := range localNames {
 					localSet[n] = true
@@ -1578,10 +1578,19 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				cliOpts.note = note
 				return nil // dispara upload no caller
 			case "download-missing":
+				// Obra sem caminho local baixa em <pasta do executável>/download/<obra>
+				// (mesmo padrão do relatório — funciona no Linux e via .bat no WSL2).
+				destDir := item.LocalPath
+				if destDir == "" {
+					destDir = filepath.Join("download", item.Name)
+					if exe, err := os.Executable(); err == nil {
+						destDir = filepath.Join(filepath.Dir(exe), "download", item.Name)
+					}
+				}
 				failed := 0
 				for i, bi := range missingDownload {
 					eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(missingDownload), bi.Name)
-					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(item.LocalPath, bi.Name)); err != nil {
+					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(destDir, bi.Name)); err != nil {
 						eprintln("erro:", err)
 						failed++
 						continue
@@ -1590,6 +1599,9 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				}
 				if failed > 0 {
 					eprintf("barfi: %d download(s) falharam\n", failed)
+				}
+				if failed < len(missingDownload) {
+					eprintln("barfi: arquivos salvos em:", destDir)
 				}
 			case "recreate":
 				parentID := cfg.ParentId
