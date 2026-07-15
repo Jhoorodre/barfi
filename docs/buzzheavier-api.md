@@ -90,6 +90,32 @@ curl -#o - -T "sample.mp4" \
 
 ---
 
+## File Download
+
+### Download a file (authenticated)
+
+```
+GET https://ts.buzzheavier.com/d/{fileId}
+Authorization: Bearer YOUR_TOKEN
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `fileId` | path | Yes | ID of the file to download |
+
+Returns `200` with the file body (`content-disposition: attachment` with the
+original filename, `accept-ranges: bytes`). Without valid authentication the
+gateway returns `302` redirecting to the file's public page on
+`buzzheavier.com` — clients must not follow the redirect and should treat it
+as an authorization failure. This is the same host the site's file manager
+links to for every file of the account.
+
+Note: the public page (`buzzheavier.com/{fileId}`) sits behind a Cloudflare
+browser challenge and is not scriptable; the `ts` gateway and the `/api/*`
+routes are not challenged.
+
+---
+
 ## Public APIs
 
 ### Get storage locations

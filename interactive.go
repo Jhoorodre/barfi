@@ -1434,16 +1434,20 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 						}
 						localNames = append(localNames, name)
 					}
+				} else if os.IsNotExist(err) {
+					contentLines = append(contentLines, "📁 Local: pasta ainda não existe no disco (será criada ao baixar)")
 				} else {
 					contentLines = append(contentLines, "📁 Local: (erro lendo pasta: "+err.Error()+")")
 				}
 			}
 			var remoteNames []string
+			var remoteItems []fsItem
 			remoteOK := false
 			remoteGone := false
 			if item.FolderID != "" && cfg.Token != "" {
 				if buzzItems, _, err := listDirectory(server, cfg.Token, item.FolderID); err == nil {
 					remoteOK = true
+					remoteItems = buzzItems
 					for _, bi := range buzzItems {
 						name := bi.Name
 						if bi.IsDirectory {
@@ -1508,10 +1512,27 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			}
 			contentDesc := strings.Join(contentLines, "\n")
 
+			// Arquivos que existem só no buzzheavier (pastas remotas ficam de fora).
+			var missingDownload []fsItem
+			if remoteOK && item.LocalPath != "" {
+				localSet := make(map[string]bool, len(localNames))
+				for _, n := range localNames {
+					localSet[n] = true
+				}
+				for _, bi := range remoteItems {
+					if !bi.IsDirectory && !localSet[bi.Name] {
+						missingDownload = append(missingDownload, bi)
+					}
+				}
+			}
+
 			var libAction string
 			var subOpts []huh.Option[string]
 			if len(missingUpload) > 0 {
 				subOpts = append(subOpts, huh.NewOption(fmt.Sprintf("📤 Enviar faltantes (%d)", len(missingUpload)), "upload-missing"))
+			}
+			if len(missingDownload) > 0 {
+				subOpts = append(subOpts, huh.NewOption(fmt.Sprintf("⬇ Baixar faltantes (%d)", len(missingDownload)), "download-missing"))
 			}
 			if item.LocalPath != "" && !remoteGone {
 				subOpts = append(subOpts, huh.NewOption("📤 Fazer upload", "upload"))
@@ -1556,6 +1577,20 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				cliOpts.recursive = false
 				cliOpts.note = note
 				return nil // dispara upload no caller
+			case "download-missing":
+				failed := 0
+				for i, bi := range missingDownload {
+					eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(missingDownload), bi.Name)
+					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(item.LocalPath, bi.Name)); err != nil {
+						eprintln("erro:", err)
+						failed++
+						continue
+					}
+					eprintln("✓")
+				}
+				if failed > 0 {
+					eprintf("barfi: %d download(s) falharam\n", failed)
+				}
 			case "recreate":
 				parentID := cfg.ParentId
 				if parentID == "" {
