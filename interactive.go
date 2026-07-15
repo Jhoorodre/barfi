@@ -1579,8 +1579,41 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				cliOpts.note = note
 				return nil // dispara upload no caller
 			case "download-missing":
+				toGet := missingDownload
+				var dlMode string
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Download de: "+item.Name).
+						Options(
+							huh.NewOption(fmt.Sprintf("Baixar tudo (%d)", len(missingDownload)), "all"),
+							huh.NewOption("Selecionar arquivos", "select"),
+							huh.NewOption("← Voltar", "back"),
+						).Value(&dlMode),
+				)).Run(); err != nil || dlMode == "back" {
+					continue
+				}
+				if dlMode == "select" {
+					var dlOpts []huh.Option[int]
+					for i, bi := range missingDownload {
+						dlOpts = append(dlOpts, huh.NewOption(bi.Name, i))
+					}
+					var picked []int
+					if err := huh.NewForm(huh.NewGroup(
+						huh.NewMultiSelect[int]().
+							Title("Selecionar downloads de: " + item.Name).
+							Description("Espaço para marcar, enter para confirmar.").
+							Options(dlOpts...).
+							Value(&picked),
+					)).Run(); err != nil || len(picked) == 0 {
+						continue
+					}
+					toGet = nil
+					for _, i := range picked {
+						toGet = append(toGet, missingDownload[i])
+					}
+				}
 				// Obra sem caminho local baixa em <pasta do executável>/download/<obra>
-				// (mesmo padrão do relatório — funciona no Linux e via .bat no WSL2).
+				// (mesmo padrão do relatório).
 				destDir := item.LocalPath
 				if destDir == "" {
 					destDir = filepath.Join("download", normalizeFSName(item.Name))
@@ -1589,9 +1622,9 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 					}
 				}
 				failed := 0
-				for i, bi := range missingDownload {
-					eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(missingDownload), bi.Name)
-					// Nome saneado: ":" e afins não podem existir no disco (Windows//mnt)
+				for i, bi := range toGet {
+					eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(toGet), bi.Name)
+					// Nome saneado: ":" e afins não podem existir no disco Windows
 					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(destDir, normalizeFSName(bi.Name))); err != nil {
 						eprintln("erro:", err)
 						failed++
@@ -1602,7 +1635,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				if failed > 0 {
 					eprintf("barfi: %d download(s) falharam\n", failed)
 				}
-				if failed < len(missingDownload) {
+				if failed < len(toGet) {
 					eprintln("barfi: arquivos salvos em:", destDir)
 				}
 			case "recreate":
