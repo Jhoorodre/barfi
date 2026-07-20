@@ -120,7 +120,12 @@ Barfi is a CLI client for multipart file uploads with parallel workers, multi-pr
 - Remote folder manager: browse, create, rename, move, delete, bookmark
 - File note editor
 - Batch select and batch delete
-- Library: link local folders to remote folders; content preview (up to 15 items per section); sync local paths against the server
+- Library ("obras"): links local folders to remote folders, with **bidirectional sync** — local dirs not yet in the library are created/linked on the server; remote folders not yet in the library are imported (no local dir created); orphaned entries (gone from both disk and server) are offered for cleanup
+- Per-obra content diff: opening an obra compares local × remote files with markers (`✓` both, `↑` local only, `↓` remote only, up to 15 lines); names are matched ignoring Windows-forbidden characters (`normalizeFSName` in `library.go`) since the server allows `:` etc. but NTFS does not
+- "Enviar faltantes (N)": one-shot upload of the `↑` files
+- "Baixar faltantes (N)": download of the `↓` files via the authenticated `ts.buzzheavier.com/d/{id}` gateway (`download.go`); batch or multiselect; obra without a local path saves to `download/<obra>` next to the executable
+- Remote folder deleted (404): explicit warning with recreate-folder / unlink actions
+- TXT report generator: walks all library folders on the server and writes a sectioned report with file URLs next to the executable
 - Path input with existence validation
 - Auto-detection: directory → asks about recursive mode
 - Dynamic forms with inline `.Validate()` callbacks
@@ -270,7 +275,7 @@ Reusable for: any CLI that needs reliable end-to-end tests without brittle mocks
 ---
 
 ### 3.6 Interactive CLI with sub-menus pattern
-**File**: `interactive.go` (1639 lines)
+**File**: `interactive.go` (2043 lines)
 
 ```go
 import "github.com/charmbracelet/huh"
@@ -352,10 +357,12 @@ Factory picks the implementation based on TTY detection; `barProgress` runs a re
 
 ```
 barfi/
-├── main.go              # Entry point, flag parsing, orchestration     (602 lines)
+├── main.go              # Entry point, flag parsing, orchestration     (637 lines)
 ├── upload.go            # Multipart upload, HTTP, retry, worker pool   (411 lines)
-├── config.go            # Multi-profile config, migration, persistence (108 lines)
-├── interactive.go       # Interactive mode, TUI, menus, library        (1639 lines)
+├── config.go            # Multi-profile config, migration, persistence (135 lines)
+├── interactive.go       # Interactive mode, TUI, menus, library        (2043 lines)
+├── library.go           # Pure library diff/sync-plan logic + name normalization (111 lines)
+├── download.go          # Authenticated download via ts.buzzheavier.com gateway
 ├── progress.go          # Progress tracking, TTY/pipe rendering        (473 lines)
 ├── partsize.go          # BUS protocol constants, part size calc       (83 lines)
 ├── encrypt.go           # AES-256-GCM token encryption at rest
@@ -400,17 +407,16 @@ HTTP headers used in multipart upload: `Upload-Length`, `Upload-Part-Number`.
 
 ---
 
-## 6. CI/CD (`.github/workflows/release.yaml`)
+## 6. CI/CD
 
-Triggered by tags matching `v*.*.*`. Three sequential jobs:
+Two workflows, both running `scripts/build.sh` (gofmt check + `go test ./...` + production build) first:
 
-| Job | What it does |
-|-----|-------------|
-| `fmt-check` | Runs `gofmt -l .`; fails if any file is unformatted |
-| `build` | Matrix build for `linux/amd64`, `linux/arm64`, `windows/amd64` with `CGO_ENABLED=0` |
-| `release` | Downloads all artifacts and creates a GitHub Release with `generate_release_notes: true` |
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| `.github/workflows/ci.yaml` | Every push (any branch) and every PR | `scripts/build.sh` only |
+| `.github/workflows/release.yaml` | Push to `main` | `scripts/build.sh`, then matrix build for `linux/amd64`, `linux/arm64`, `windows/amd64` with `CGO_ENABLED=0`, then publishes a GitHub Release |
 
-Windows binary is named `barfi-windows-amd64.exe`; Linux binaries omit the extension.
+Windows binary is named `barfi-windows-amd64.exe`; Linux binaries omit the extension. Every push to `main` produces a new release automatically — there is no manual tagging step.
 
 ---
 
