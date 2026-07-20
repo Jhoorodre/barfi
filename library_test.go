@@ -57,10 +57,27 @@ func TestNormalizeFSName(t *testing.T) {
 		`a<b>c:d"e|f?g*`:    "abcdefg",
 		" nome com borda. ": "nome com borda",
 		"..":                "",
+		"cap\x0101\x7f.cbz": "cap01.cbz", // caracteres de controle (0x01, DEL) removidos
 	} {
 		if got := normalizeFSName(in); got != want {
 			t.Errorf("normalizeFSName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestMatchKey(t *testing.T) {
+	cases := [][2]string{
+		{"CAP 01.CBZ", "cap 01.cbz"},
+		{"Tower of God: X", "tower of god x"}, // ':' removido + minúsculas juntos
+	}
+	for _, c := range cases {
+		if matchKey(c[0]) != matchKey(c[1]) {
+			t.Errorf("matchKey(%q) != matchKey(%q): %q vs %q", c[0], c[1], matchKey(c[0]), matchKey(c[1]))
+		}
+	}
+	// normalizeFSName preserva capitalização — matchKey não deve alterar o disco.
+	if normalizeFSName("CAP 01.cbz") != "CAP 01.cbz" {
+		t.Error("normalizeFSName não deve alterar capitalização")
 	}
 }
 
@@ -74,6 +91,13 @@ func TestDiffNamesNormalizaWindows(t *testing.T) {
 	}
 	if len(d.remoteOnly) != 1 || d.remoteOnly[0] != "Cap: 02.cbz" {
 		t.Errorf("remoteOnly = %v", d.remoteOnly)
+	}
+}
+
+func TestDiffNamesCaseInsensitive(t *testing.T) {
+	d := diffNames([]string{"Cap 01.cbz"}, []string{"CAP 01.CBZ"})
+	if len(d.both) != 1 || len(d.localOnly) != 0 || len(d.remoteOnly) != 0 {
+		t.Errorf("esperava casar ignorando maiúsculas/minúsculas: %+v", d)
 	}
 }
 

@@ -1025,7 +1025,7 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 	for _, it := range serverItems {
 		if it.IsDirectory {
 			remoteIDs[it.ID] = true
-			remoteNames[normalizeFSName(it.Name)] = true
+			remoteNames[matchKey(it.Name)] = true
 		}
 	}
 	var missing []string
@@ -1036,7 +1036,7 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 		if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
 			continue
 		}
-		if remoteIDs[item.FolderID] || remoteNames[normalizeFSName(item.Name)] {
+		if remoteIDs[item.FolderID] || remoteNames[matchKey(item.Name)] {
 			continue
 		}
 		missing = append(missing, item.Name)
@@ -1064,12 +1064,12 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 			serverFolders := make(map[string]string) // nome normalizado → ID
 			for _, item := range serverItems {
 				if item.IsDirectory {
-					serverFolders[normalizeFSName(item.Name)] = item.ID
+					serverFolders[matchKey(item.Name)] = item.ID
 				}
 			}
 			for _, name := range plan.addLocal {
 				var folderID string
-				if id, exists := serverFolders[normalizeFSName(name)]; exists {
+				if id, exists := serverFolders[matchKey(name)]; exists {
 					folderID = id
 					eprintf("barfi: ↔ %s (pasta existente vinculada)\n", name)
 				} else {
@@ -1549,7 +1549,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 					localSet[normKey(n)] = true
 				}
 				for _, bi := range remoteItems {
-					if !bi.IsDirectory && !localSet[normalizeFSName(bi.Name)] &&
+					if !bi.IsDirectory && !localSet[matchKey(bi.Name)] &&
 						safeRemoteName(bi.Name) && normalizeFSName(bi.Name) != "" {
 						missingDownload = append(missingDownload, bi)
 					}

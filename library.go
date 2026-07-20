@@ -46,13 +46,18 @@ func safeRemoteName(name string) bool {
 	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\`)
 }
 
-// normalizeFSName reduz um nome à forma comparável entre sistemas de
-// arquivos: remove os caracteres proibidos no Windows (< > : " / \ | ? *)
-// e espaços/pontos nas bordas. O servidor aceita ":" mas o disco (Windows/
-// /mnt no WSL2) não — sem isso, "Obra: X" no servidor e "Obra X" no disco
-// parecem obras diferentes. Usado só para CASAR nomes, nunca para exibir.
+// normalizeFSName reduz um nome à forma segura para gravar em disco em
+// qualquer sistema suportado: remove os caracteres proibidos no Windows
+// (< > : " / \ | ? *), caracteres de controle (0x00–0x1F, 0x7F — inválidos
+// ou perigosos em qualquer SO, incluindo Linux) e apara espaços/pontos nas
+// bordas (Windows não aceita nome terminado em espaço ou ponto). Preserva
+// maiúsculas/minúsculas — usado também para montar o nome real do arquivo
+// salvo, não só para comparar.
 func normalizeFSName(name string) string {
 	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
 		switch r {
 		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
 			return -1
@@ -62,12 +67,22 @@ func normalizeFSName(name string) string {
 	return strings.Trim(name, " .")
 }
 
-// normKey normaliza preservando o sufixo "/" que marca diretórios no diff.
+// matchKey normaliza para COMPARAÇÃO de nomes: normalizeFSName + minúsculas.
+// Servidor e disco podem devolver a mesma obra com capitalização diferente
+// (renomear no Windows Explorer é case-insensitive; o servidor não sabe
+// disso) — sem o fold, "Cap 01.cbz" e "CAP 01.CBZ" pareceriam arquivos
+// diferentes e o item nunca sairia da lista de "faltantes". Nunca usar para
+// nome de arquivo gravado (perderia a capitalização original).
+func matchKey(name string) string {
+	return strings.ToLower(normalizeFSName(name))
+}
+
+// normKey é matchKey preservando o sufixo "/" que marca diretórios no diff.
 func normKey(name string) string {
 	if strings.HasSuffix(name, "/") {
-		return normalizeFSName(strings.TrimSuffix(name, "/")) + "/"
+		return matchKey(strings.TrimSuffix(name, "/")) + "/"
 	}
-	return normalizeFSName(name)
+	return matchKey(name)
 }
 
 // syncPlan é o que o sync bidirecional propõe fazer.
@@ -85,24 +100,24 @@ func buildSyncPlan(library []LibraryItem, localDirs []string, remoteFolders []fs
 	libNames := make(map[string]bool, len(library))
 	libFolderIDs := make(map[string]bool, len(library))
 	for _, item := range library {
-		libNames[normalizeFSName(item.Name)] = true
+		libNames[matchKey(item.Name)] = true
 		if item.FolderID != "" {
 			libFolderIDs[item.FolderID] = true
 		}
 	}
 	localSet := make(map[string]bool, len(localDirs))
 	for _, name := range localDirs {
-		localSet[normalizeFSName(name)] = true
+		localSet[matchKey(name)] = true
 	}
 
 	var plan syncPlan
 	for _, name := range localDirs {
-		if !libNames[normalizeFSName(name)] {
+		if !libNames[matchKey(name)] {
 			plan.addLocal = append(plan.addLocal, name)
 		}
 	}
 	for _, f := range remoteFolders {
-		if !f.IsDirectory || libNames[normalizeFSName(f.Name)] || libFolderIDs[f.ID] || localSet[normalizeFSName(f.Name)] {
+		if !f.IsDirectory || libNames[matchKey(f.Name)] || libFolderIDs[f.ID] || localSet[matchKey(f.Name)] {
 			continue
 		}
 		plan.importRemote = append(plan.importRemote, f)
