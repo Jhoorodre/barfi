@@ -70,6 +70,8 @@ jobs:
         with:
           tag_name: latest
           name: "Última versão (main)"
+          body: |
+            Build automático mais recente da branch `main`.
+            Commit: ${{ github.sha }}
           files: dist/*
-          generate_release_notes: true
           prerelease: true
