@@ -27,8 +27,8 @@ git clone https://github.com/Jhoorodre/barfi
 cd barfi && CGO_ENABLED=0 go build -ldflags="-s -w" -o barfi ./
 ```
 
-Pre-built binaries are available for Linux (amd64, arm64) on the [releases page](https://github.com/Jhoorodre/barfi/releases).
-macOS and Windows users must build from source.
+Pre-built binaries are available for Linux (amd64, arm64) and Windows (amd64) on the [releases page](https://github.com/Jhoorodre/barfi/releases).
+macOS users must build from source.
 
 > Requires Go 1.23.0 or later.
 
@@ -103,7 +103,7 @@ Interactive mode provides:
 
 - **Upload files** — pick files and destination folder through menus; asks about recursive mode for directories
 - **Manage Buzzheavier** — browse, create, rename, move, and delete remote folders; manage bookmarks; edit file notes; batch-select and batch-delete items
-- **Library** — link local folders to remote folders for recurring uploads; shows content preview (up to 15 items per section); sync local paths against the server
+- **Library** — link local folders to remote folders for recurring uploads. Bidirectional sync: local folders are created/linked on the server, remote-only folders are imported into the library, and orphaned entries can be cleaned up. Opening a work shows a diff (✓ synced, ↑ local only, ↓ remote only) with one-shot actions to upload or download exactly what's missing
 - **Manage Profiles** — create, edit, switch between, and delete named configuration profiles (e.g. personal and work accounts)
 
 WSL2 users: Windows paths (e.g. `C:\Users\foo`) are automatically normalized to `/mnt/c/Users/foo`.
@@ -173,12 +173,7 @@ Old flat configs (pre-0.1.0) are automatically migrated to profile format on fir
 
 ### Releases
 
-Pre-built binaries for Linux (amd64, arm64) and Windows (amd64) are automatically built and published to the [releases page](https://github.com/Jhoorodre/barfi/releases) when a version tag (`v*.*.*`) is pushed. To trigger a release, create and push a tag:
-
-```bash
-git tag v1.2.3
-git push origin v1.2.3
-```
+Pre-built binaries for Linux (amd64, arm64) and Windows (amd64) are automatically built and published to the [releases page](https://github.com/Jhoorodre/barfi/releases) on every push to `main` — no manual tagging needed.
 
 ### API reference
 

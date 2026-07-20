@@ -27,8 +27,8 @@ git clone https://github.com/Jhoorodre/barfi
 cd barfi && CGO_ENABLED=0 go build -ldflags="-s -w" -o barfi ./
 ```
 
-Binários pré-compilados estão disponíveis para Linux (amd64, arm64) nas [releases](https://github.com/Jhoorodre/barfi/releases).
-macOS e Windows precisam compilar da fonte.
+Binários pré-compilados estão disponíveis para Linux (amd64, arm64) e Windows (amd64) nas [releases](https://github.com/Jhoorodre/barfi/releases).
+macOS precisa compilar da fonte.
 
 > Requer Go 1.23.0 ou superior.
 
@@ -103,7 +103,7 @@ O modo interativo oferece:
 
 - **Enviar arquivos** — seleção de arquivos e pasta de destino via menus; pergunta sobre modo recursivo para diretórios
 - **Gerenciar Buzzheavier** — navegue, crie, renomeie, mova e exclua pastas no servidor; gerencie favoritos; edite notas de arquivos; seleção e exclusão em lote
-- **Biblioteca** — vincule pastas locais a pastas remotas para envios recorrentes; exibe preview do conteúdo (até 15 itens por seção); sincronize caminhos locais com o servidor
+- **Biblioteca** — vincule pastas locais a pastas remotas para envios recorrentes. Sincronização bidirecional: pastas locais são criadas/vinculadas no servidor, pastas só no servidor são importadas para a biblioteca, e obras órfãs podem ser limpas. Abrir uma obra mostra um diff (✓ sincronizado, ↑ só local, ↓ só no servidor) com atalhos para enviar ou baixar exatamente o que falta
 - **Gerenciar Perfis** — crie, edite, alterne e exclua perfis de configuração nomeados (ex: contas pessoal e de trabalho)
 
 Usuários de WSL2: caminhos do Windows (ex: `C:\Users\foo`) são normalizados automaticamente para `/mnt/c/Users/foo`.
@@ -173,12 +173,7 @@ Configs antigas no formato plano (pré-0.1.0) são migradas automaticamente para
 
 ### Releases
 
-Binários pré-compilados para Linux (amd64, arm64) e Windows (amd64) são gerados e publicados automaticamente na [página de releases](https://github.com/Jhoorodre/barfi/releases) ao criar uma tag de versão (`v*.*.*`). Para publicar uma nova versão:
-
-```bash
-git tag v1.2.3
-git push origin v1.2.3
-```
+Binários pré-compilados para Linux (amd64, arm64) e Windows (amd64) são gerados e publicados automaticamente na [página de releases](https://github.com/Jhoorodre/barfi/releases) a cada push no `main` — sem necessidade de criar tag manualmente.
 
 ### Referência da API
 
