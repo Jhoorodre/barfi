@@ -1203,6 +1203,35 @@ func changeLibraryBasePath(cfg *Config, mCfg *MultiConfig) error {
 	return nil
 }
 
+// downloadObraFiles baixa os arquivos dados para a pasta da obra (ou
+// <dir do executável>/download/<obra> se a obra não tem caminho local).
+func downloadObraFiles(token string, item LibraryItem, files []fsItem) {
+	destDir := item.LocalPath
+	if destDir == "" {
+		destDir = filepath.Join("download", normalizeFSName(item.Name))
+		if exe, err := os.Executable(); err == nil {
+			destDir = filepath.Join(filepath.Dir(exe), "download", normalizeFSName(item.Name))
+		}
+	}
+	failed := 0
+	for i, bi := range files {
+		eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(files), bi.Name)
+		// Nome saneado: ":" e afins não podem existir no disco Windows
+		if err := downloadFile(token, bi.ID, filepath.Join(destDir, normalizeFSName(bi.Name))); err != nil {
+			eprintln("erro:", err)
+			failed++
+			continue
+		}
+		eprintln("✓")
+	}
+	if failed > 0 {
+		eprintf("barfi: %d download(s) falharam\n", failed)
+	}
+	if failed < len(files) {
+		eprintln("barfi: arquivos salvos em:", destDir)
+	}
+}
+
 // promptNote pede a nota do upload, pré-preenchida com a padrão do perfil.
 func promptNote(defaultNote string) (string, error) {
 	note := defaultNote
@@ -1534,6 +1563,9 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			}
 			if len(missingDownload) > 0 {
 				subOpts = append(subOpts, huh.NewOption(fmt.Sprintf("⬇ Baixar faltantes (%d)", len(missingDownload)), "download-missing"))
+				if len(missingDownload) > 1 {
+					subOpts = append(subOpts, huh.NewOption("⬇ Selecionar arquivos para baixar", "download-select"))
+				}
 			}
 			if item.LocalPath != "" && !remoteGone {
 				subOpts = append(subOpts, huh.NewOption("📤 Fazer upload", "upload"))
@@ -1579,65 +1611,27 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				cliOpts.note = note
 				return nil // dispara upload no caller
 			case "download-missing":
-				toGet := missingDownload
-				var dlMode string
+				downloadObraFiles(cfg.Token, item, missingDownload)
+			case "download-select":
+				var dlOpts []huh.Option[int]
+				for i, bi := range missingDownload {
+					dlOpts = append(dlOpts, huh.NewOption(bi.Name, i))
+				}
+				var picked []int
 				if err := huh.NewForm(huh.NewGroup(
-					huh.NewSelect[string]().
-						Title("Download de: "+item.Name).
-						Options(
-							huh.NewOption(fmt.Sprintf("Baixar tudo (%d)", len(missingDownload)), "all"),
-							huh.NewOption("Selecionar arquivos", "select"),
-							huh.NewOption("← Voltar", "back"),
-						).Value(&dlMode),
-				)).Run(); err != nil || dlMode == "back" {
+					huh.NewMultiSelect[int]().
+						Title("Selecionar downloads de: " + item.Name).
+						Description("Espaço para marcar, enter para confirmar.").
+						Options(dlOpts...).
+						Value(&picked),
+				)).Run(); err != nil || len(picked) == 0 {
 					continue
 				}
-				if dlMode == "select" {
-					var dlOpts []huh.Option[int]
-					for i, bi := range missingDownload {
-						dlOpts = append(dlOpts, huh.NewOption(bi.Name, i))
-					}
-					var picked []int
-					if err := huh.NewForm(huh.NewGroup(
-						huh.NewMultiSelect[int]().
-							Title("Selecionar downloads de: " + item.Name).
-							Description("Espaço para marcar, enter para confirmar.").
-							Options(dlOpts...).
-							Value(&picked),
-					)).Run(); err != nil || len(picked) == 0 {
-						continue
-					}
-					toGet = nil
-					for _, i := range picked {
-						toGet = append(toGet, missingDownload[i])
-					}
+				var toGet []fsItem
+				for _, i := range picked {
+					toGet = append(toGet, missingDownload[i])
 				}
-				// Obra sem caminho local baixa em <pasta do executável>/download/<obra>
-				// (mesmo padrão do relatório).
-				destDir := item.LocalPath
-				if destDir == "" {
-					destDir = filepath.Join("download", normalizeFSName(item.Name))
-					if exe, err := os.Executable(); err == nil {
-						destDir = filepath.Join(filepath.Dir(exe), "download", normalizeFSName(item.Name))
-					}
-				}
-				failed := 0
-				for i, bi := range toGet {
-					eprintf("barfi: ⬇ (%d/%d) %s… ", i+1, len(toGet), bi.Name)
-					// Nome saneado: ":" e afins não podem existir no disco Windows
-					if err := downloadFile(cfg.Token, bi.ID, filepath.Join(destDir, normalizeFSName(bi.Name))); err != nil {
-						eprintln("erro:", err)
-						failed++
-						continue
-					}
-					eprintln("✓")
-				}
-				if failed > 0 {
-					eprintf("barfi: %d download(s) falharam\n", failed)
-				}
-				if failed < len(toGet) {
-					eprintln("barfi: arquivos salvos em:", destDir)
-				}
+				downloadObraFiles(cfg.Token, item, toGet)
 			case "recreate":
 				parentID := cfg.ParentId
 				if parentID == "" {
