@@ -209,3 +209,72 @@ func TestImportedItem(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+func TestMissingDownloads(t *testing.T) {
+	remote := []fsItem{
+		{ID: "1", Name: "Cap 01.cbz"},
+		{ID: "2", Name: "Cap 02.cbz"},
+		{ID: "3", Name: "Subpasta", IsDirectory: true}, // pasta remota nunca é baixada
+		{ID: "4", Name: ".."},                          // path traversal
+		{ID: "5", Name: "../fora.cbz"},                 // path traversal com separador
+		{ID: "6", Name: `a\b.cbz`},                     // separador do Windows
+		{ID: "7", Name: ":?*"},                         // vazio depois de saneado
+		{ID: "8", Name: "CAP 03: final.cbz"},           // existe no disco com nome saneado/outra caixa
+	}
+	local := []string{"cap 01.cbz", "cap 03 final.CBZ", "Subpasta/"}
+	got := missingDownloads(remote, local)
+	if len(got) != 1 || got[0].ID != "2" {
+		t.Errorf("missingDownloads = %+v, want só Cap 02.cbz", got)
+	}
+}
+
+// Uma pasta local com o mesmo nome de um arquivo remoto não conta como "já baixado".
+func TestMissingDownloads_LocalFolderDoesNotMaskRemoteFile(t *testing.T) {
+	got := missingDownloads([]fsItem{{ID: "1", Name: "Extras"}}, []string{"Extras/"})
+	if len(got) != 1 {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestMissingUploads(t *testing.T) {
+	got := missingUploads("/base/Obra", []string{"cap 03.cbz", "Extras/"})
+	want := []string{filepath.Join("/base/Obra", "cap 03.cbz"), filepath.Join("/base/Obra", "Extras")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	if got := missingUploads("/x", nil); len(got) != 0 {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestForgetFolders(t *testing.T) {
+	cfg := &Config{
+		ParentId: "del1",
+		Folders:  []BookmarkedFolder{{ID: "del1", Name: "A"}, {ID: "keep", Name: "B"}, {ID: "del2", Name: "C"}},
+		Library: []LibraryItem{
+			{Name: "O1", FolderID: "del2"},
+			{Name: "O2", FolderID: "keep"},
+			{Name: "O3"}, // sem vínculo: intocada
+		},
+	}
+	forgetFolders(cfg, map[string]bool{"del1": true, "del2": true})
+	if cfg.ParentId != "" {
+		t.Errorf("ParentId = %q", cfg.ParentId)
+	}
+	if len(cfg.Folders) != 1 || cfg.Folders[0].ID != "keep" {
+		t.Errorf("Folders = %+v", cfg.Folders)
+	}
+	if cfg.Library[0].FolderID != "" || cfg.Library[1].FolderID != "keep" || cfg.Library[2].FolderID != "" {
+		t.Errorf("Library = %+v", cfg.Library)
+	}
+}
+
+// ParentId vazio não pode ser "apagado" por um conjunto sem a chave vazia, nem
+// tocar o que não foi excluído.
+func TestForgetFolders_UnrelatedIsUntouched(t *testing.T) {
+	cfg := &Config{ParentId: "p", Folders: []BookmarkedFolder{{ID: "f"}}, Library: []LibraryItem{{Name: "O", FolderID: "x"}}}
+	forgetFolders(cfg, map[string]bool{"outro": true})
+	if cfg.ParentId != "p" || len(cfg.Folders) != 1 || cfg.Library[0].FolderID != "x" {
+		t.Errorf("cfg mudou sem necessidade: %+v", cfg)
+	}
+}

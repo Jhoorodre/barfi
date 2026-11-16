@@ -176,3 +176,52 @@ func existingFolderID(serverItems []fsItem, name string) (string, bool) {
 func importedItem(f fsItem, basePath string) LibraryItem {
 	return LibraryItem{Name: f.Name, LocalPath: filepath.Join(basePath, normalizeFSName(f.Name)), FolderID: f.ID}
 }
+
+// missingDownloads devolve os arquivos remotos que não existem no disco.
+// localNames são os nomes locais (pastas com sufixo "/"). Pastas remotas ficam
+// de fora, e nomes que escapariam da pasta da obra (path traversal) ou que
+// ficam vazios depois de saneados nunca são oferecidos para download.
+func missingDownloads(remoteItems []fsItem, localNames []string) []fsItem {
+	localSet := make(map[string]bool, len(localNames))
+	for _, n := range localNames {
+		localSet[normKey(n)] = true
+	}
+	var missing []fsItem
+	for _, bi := range remoteItems {
+		if !bi.IsDirectory && !localSet[matchKey(bi.Name)] &&
+			safeRemoteName(bi.Name) && normalizeFSName(bi.Name) != "" {
+			missing = append(missing, bi)
+		}
+	}
+	return missing
+}
+
+// missingUploads converte os nomes "só no disco" do diff (pastas com sufixo "/")
+// em caminhos completos sob localPath.
+func missingUploads(localPath string, localOnly []string) []string {
+	var paths []string
+	for _, n := range localOnly {
+		paths = append(paths, filepath.Join(localPath, strings.TrimSuffix(n, "/")))
+	}
+	return paths
+}
+
+// forgetFolders remove do config toda referência a pastas remotas excluídas:
+// pasta padrão do perfil, favoritos e vínculo das obras da biblioteca.
+func forgetFolders(cfg *Config, deleted map[string]bool) {
+	if deleted[cfg.ParentId] {
+		cfg.ParentId = ""
+	}
+	kept := cfg.Folders[:0:0]
+	for _, f := range cfg.Folders {
+		if !deleted[f.ID] {
+			kept = append(kept, f)
+		}
+	}
+	cfg.Folders = kept
+	for i := range cfg.Library {
+		if deleted[cfg.Library[i].FolderID] {
+			cfg.Library[i].FolderID = ""
+		}
+	}
+}

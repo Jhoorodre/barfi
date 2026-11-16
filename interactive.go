@@ -629,22 +629,7 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 				eprintln("barfi:", err)
 				continue
 			}
-			deletedID := path[len(path)-1].id
-			if cfg.ParentId == deletedID {
-				cfg.ParentId = ""
-			}
-			kept := cfg.Folders[:0:0]
-			for _, f := range cfg.Folders {
-				if f.ID != deletedID {
-					kept = append(kept, f)
-				}
-			}
-			cfg.Folders = kept
-			for i := range cfg.Library {
-				if cfg.Library[i].FolderID == deletedID {
-					cfg.Library[i].FolderID = ""
-				}
-			}
+			forgetFolders(cfg, map[string]bool{path[len(path)-1].id: true})
 			saveAndReloadCfg(mCfg, cfg)
 			path = path[:len(path)-1]
 			newItems, _, err := listDirectory(server, cfg.Token, path[len(path)-1].id)
@@ -804,21 +789,7 @@ func browseFolders(cfg *Config, mCfg *MultiConfig) error {
 					}
 				}
 				if len(deletedSet) > 0 {
-					if deletedSet[cfg.ParentId] {
-						cfg.ParentId = ""
-					}
-					kept := cfg.Folders[:0:0]
-					for _, f := range cfg.Folders {
-						if !deletedSet[f.ID] {
-							kept = append(kept, f)
-						}
-					}
-					cfg.Folders = kept
-					for i := range cfg.Library {
-						if deletedSet[cfg.Library[i].FolderID] {
-							cfg.Library[i].FolderID = ""
-						}
-					}
+					forgetFolders(cfg, deletedSet)
 					saveAndReloadCfg(mCfg, cfg)
 				}
 			}
@@ -1485,9 +1456,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 				if total > shown {
 					contentLines = append(contentLines, fmt.Sprintf("  … e mais %d item(s)", total-shown))
 				}
-				for _, n := range d.localOnly {
-					missingUpload = append(missingUpload, filepath.Join(item.LocalPath, strings.TrimSuffix(n, "/")))
-				}
+				missingUpload = missingUploads(item.LocalPath, d.localOnly)
 			case localOK:
 				contentLines = append(contentLines, "📁 Local ("+item.LocalPath+"):")
 				for i, n := range localNames {
@@ -1512,16 +1481,7 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 			// Arquivos que existem só no buzzheavier (pastas remotas ficam de fora).
 			var missingDownload []fsItem
 			if remoteOK {
-				localSet := make(map[string]bool, len(localNames))
-				for _, n := range localNames {
-					localSet[normKey(n)] = true
-				}
-				for _, bi := range remoteItems {
-					if !bi.IsDirectory && !localSet[matchKey(bi.Name)] &&
-						safeRemoteName(bi.Name) && normalizeFSName(bi.Name) != "" {
-						missingDownload = append(missingDownload, bi)
-					}
-				}
+				missingDownload = missingDownloads(remoteItems, localNames)
 			}
 
 			var libAction string
