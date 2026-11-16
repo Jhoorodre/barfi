@@ -19,3 +19,7 @@ jobs:
         run: chmod +x scripts/build.sh
       - name: CI
         run: ./scripts/build.sh
+      - name: Testes com detector de race
+        run: go test -race ./...
+      - name: Compila para Windows (release inclui windows/amd64)
+        run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...
