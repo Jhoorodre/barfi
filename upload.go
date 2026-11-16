@@ -101,7 +101,8 @@ func (u *Uploader) validate() error {
 	}
 	totalParts := (u.fileSize + u.partSize - 1) / u.partSize
 	if totalParts > MaxParts {
-		return fmt.Errorf("file would require %d parts, exceeds protocol limit %d", totalParts, MaxParts)
+		return fmt.Errorf("file would require %d parts, exceeds protocol limit %d (max file size with %s parts: %s)",
+			totalParts, MaxParts, humanSize(u.partSize), humanSize(MaxParts*u.partSize))
 	}
 	return nil
 }
