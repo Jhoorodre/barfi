@@ -1015,32 +1015,10 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 
 	plan := buildSyncPlan(cfg.Library, localDirs, serverItems)
 
-	// Obras órfãs: sem pasta no disco E sem pasta no servidor (na listagem
-	// da pasta padrão). Obra sem pasta local mas viva no servidor é o estado
-	// normal de uma importada — removê-la só faria o sync re-importar depois.
-	// ponytail: obra vinculada a pasta fora da pasta padrão pode ser falso
-	// positivo aqui; o confirm lista os nomes e a tela da obra trata o 404 real.
-	remoteIDs := make(map[string]bool, len(serverItems))
-	remoteNames := make(map[string]bool, len(serverItems))
-	for _, it := range serverItems {
-		if it.IsDirectory {
-			remoteIDs[it.ID] = true
-			remoteNames[matchKey(it.Name)] = true
-		}
-	}
-	var missing []string
-	for _, item := range cfg.Library {
-		if item.LocalPath == "" {
-			continue
-		}
-		if _, err := os.Stat(item.LocalPath); !os.IsNotExist(err) {
-			continue
-		}
-		if remoteIDs[item.FolderID] || remoteNames[matchKey(item.Name)] {
-			continue
-		}
-		missing = append(missing, item.Name)
-	}
+	missing := findOrphans(cfg.Library, serverItems, func(path string) bool {
+		_, err := os.Stat(path)
+		return !os.IsNotExist(err)
+	})
 
 	if len(plan.addLocal) == 0 && len(plan.importRemote) == 0 && len(missing) == 0 {
 		eprintln("barfi: biblioteca em dia — nada para sincronizar")
@@ -1061,15 +1039,9 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 			return err
 		}
 		if confirm {
-			serverFolders := make(map[string]string) // nome normalizado → ID
-			for _, item := range serverItems {
-				if item.IsDirectory {
-					serverFolders[matchKey(item.Name)] = item.ID
-				}
-			}
 			for _, name := range plan.addLocal {
 				var folderID string
-				if id, exists := serverFolders[matchKey(name)]; exists {
+				if id, exists := existingFolderID(serverItems, name); exists {
 					folderID = id
 					eprintf("barfi: ↔ %s (pasta existente vinculada)\n", name)
 				} else {
@@ -1108,11 +1080,7 @@ func syncLibrary(cfg *Config, mCfg *MultiConfig) error {
 		}
 		if confirm {
 			for _, f := range plan.importRemote {
-				cfg.Library = append(cfg.Library, LibraryItem{
-					Name:      f.Name,
-					LocalPath: filepath.Join(basePath, normalizeFSName(f.Name)),
-					FolderID:  f.ID,
-				})
+				cfg.Library = append(cfg.Library, importedItem(f, basePath))
 				eprintf("barfi: ↓ %s (importada do servidor)\n", f.Name)
 				changed = true
 			}

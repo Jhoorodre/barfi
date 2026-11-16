@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -153,5 +154,58 @@ func TestBuildSyncPlan(t *testing.T) {
 	}
 	if len(plan.importRemote) != 1 || plan.importRemote[0].ID != "idC" {
 		t.Errorf("importRemote = %+v, want só idC", plan.importRemote)
+	}
+}
+
+func TestFindOrphans(t *testing.T) {
+	server := []fsItem{
+		{ID: "d1", Name: "No Servidor", IsDirectory: true},
+		{ID: "f9", Name: "arquivo.txt", IsDirectory: false},
+	}
+	lib := []LibraryItem{
+		{Name: "Só Importada", FolderID: "x"},                            // sem LocalPath: nunca órfã
+		{Name: "No Disco", LocalPath: "/base/No Disco", FolderID: "zzz"}, // existe no disco
+		{Name: "Órfã", LocalPath: "/base/Órfã", FolderID: "gone"},        // sumiu dos dois lados
+		{Name: "Viva por ID", LocalPath: "/base/a", FolderID: "d1"},      // sumiu do disco, existe por ID
+		{Name: "NO SERVIDOR", LocalPath: "/base/b", FolderID: "outro"},   // sumiu do disco, existe por nome (case)
+		{Name: "arquivo.txt", LocalPath: "/base/c", FolderID: "f9"},      // arquivo no servidor não conta como pasta
+	}
+	onDisk := map[string]bool{"/base/No Disco": true}
+	got := findOrphans(lib, server, func(p string) bool { return onDisk[p] })
+	want := []string{"Órfã", "arquivo.txt"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("findOrphans = %v, want %v", got, want)
+	}
+}
+
+// Erro de permissão no stat (exists=true) nunca pode marcar a obra como órfã.
+func TestFindOrphans_UnknownStateIsNotOrphan(t *testing.T) {
+	lib := []LibraryItem{{Name: "X", LocalPath: "/sem/permissao", FolderID: "a"}}
+	if got := findOrphans(lib, nil, func(string) bool { return true }); len(got) != 0 {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestExistingFolderID(t *testing.T) {
+	items := []fsItem{
+		{ID: "1", Name: "Berserk", IsDirectory: true},
+		{ID: "2", Name: "Berserk", IsDirectory: false}, // arquivo homônimo é ignorado
+		{ID: "3", Name: "Vagabond", IsDirectory: true},
+	}
+	if id, ok := existingFolderID(items, "BERSERK"); !ok || id != "1" {
+		t.Errorf("case-insensitive: id=%q ok=%v", id, ok)
+	}
+	if _, ok := existingFolderID(items, "Outra"); ok {
+		t.Error("não deveria achar pasta inexistente")
+	}
+	if _, ok := existingFolderID(nil, "x"); ok {
+		t.Error("lista vazia")
+	}
+}
+
+func TestImportedItem(t *testing.T) {
+	got := importedItem(fsItem{ID: "p1", Name: "Obra: Parte 1"}, "/base")
+	if got.Name != "Obra: Parte 1" || got.FolderID != "p1" || got.LocalPath != filepath.Join("/base", normalizeFSName("Obra: Parte 1")) {
+		t.Errorf("got %+v", got)
 	}
 }

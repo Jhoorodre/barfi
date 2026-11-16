@@ -3,7 +3,10 @@ package main
 // Lógica pura de comparação da biblioteca (local ↔ Buzzheavier).
 // Separada da TUI (interactive.go) para ser testável sem terminal.
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 // libDiff é o resultado da comparação de nomes entre o disco e o servidor.
 type libDiff struct {
@@ -123,4 +126,53 @@ func buildSyncPlan(library []LibraryItem, localDirs []string, remoteFolders []fs
 		plan.importRemote = append(plan.importRemote, f)
 	}
 	return plan
+}
+
+// findOrphans lista as obras com pasta local registrada que não existe mais no
+// disco E não existe no servidor (por ID ou por nome). Obra sem pasta local mas
+// viva no servidor é o estado normal de uma importada, não é órfã.
+// exists deve devolver true quando o caminho existe OU quando não dá para saber
+// (ex.: erro de permissão) — só "não existe" confirmado conta como ausente.
+// ponytail: obra vinculada a pasta fora da pasta padrão pode ser falso positivo;
+// o confirm lista os nomes e a tela da obra trata o 404 real.
+func findOrphans(library []LibraryItem, serverItems []fsItem, exists func(path string) bool) []string {
+	remoteIDs := make(map[string]bool, len(serverItems))
+	remoteNames := make(map[string]bool, len(serverItems))
+	for _, it := range serverItems {
+		if it.IsDirectory {
+			remoteIDs[it.ID] = true
+			remoteNames[matchKey(it.Name)] = true
+		}
+	}
+	var orphans []string
+	for _, item := range library {
+		if item.LocalPath == "" || exists(item.LocalPath) {
+			continue
+		}
+		if remoteIDs[item.FolderID] || remoteNames[matchKey(item.Name)] {
+			continue
+		}
+		orphans = append(orphans, item.Name)
+	}
+	return orphans
+}
+
+// existingFolderID acha, entre os itens do servidor, uma pasta com o mesmo nome
+// (comparação tolerante a maiúsculas/caracteres de controle) para vincular em
+// vez de criar uma duplicada.
+func existingFolderID(serverItems []fsItem, name string) (string, bool) {
+	key := matchKey(name)
+	id, found := "", false
+	for _, it := range serverItems {
+		if it.IsDirectory && matchKey(it.Name) == key {
+			id, found = it.ID, true // com nomes duplicados no servidor, a última vence (comportamento original)
+		}
+	}
+	return id, found
+}
+
+// importedItem monta a obra de uma pasta que só existe no servidor. O caminho
+// local usa o nome seguro para o disco; a pasta local NÃO é criada.
+func importedItem(f fsItem, basePath string) LibraryItem {
+	return LibraryItem{Name: f.Name, LocalPath: filepath.Join(basePath, normalizeFSName(f.Name)), FolderID: f.ID}
 }
