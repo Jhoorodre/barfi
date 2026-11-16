@@ -1807,7 +1807,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 			if err := huh.NewForm(huh.NewGroup(
 				huh.NewText().
 					Title("Arquivo(s) ou pasta(s) para enviar").
-					Description("Um caminho por linha (Alt+Enter ou Ctrl+J p/ nova linha). Caminho completo ou relativo. Aspas são ignoradas. Aceita Windows e WSL.").
+					Description("Um caminho por linha (Alt+Enter = nova linha). Aspas são ignoradas.").
 					Value(&fileOrDir).
 					Validate(func(str string) error {
 						var err error
