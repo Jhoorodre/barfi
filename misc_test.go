@@ -169,8 +169,13 @@ func TestKnownLimit_FileBetween976GiBAnd1TiBIsRejected(t *testing.T) {
 	u := newTestUploader(t, []byte("x"))
 	u.fileSize = MaxFileSize
 	u.partSize = calcPartSize(u.fileSize)
-	if err := u.validate(); err == nil || !strings.Contains(err.Error(), "parts") {
-		t.Errorf("err = %v", err)
+	err := u.validate()
+	if err == nil || !strings.Contains(err.Error(), "parts") {
+		t.Fatalf("err = %v", err)
+	}
+	// A mensagem deve dizer qual é o tamanho máximo real (976.56 GiB), não só o nº de partes.
+	if !strings.Contains(err.Error(), "976.56 GiB") {
+		t.Errorf("mensagem sem o tamanho máximo efetivo: %v", err)
 	}
 }
 
