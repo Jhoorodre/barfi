@@ -45,6 +45,9 @@ func TestParseSize(t *testing.T) {
 		{"1KB", 1000, false},
 		{"1KiB", 1024, false},
 		{"0.5GB", 0, true},
+		{"9999999999GB", 0, true}, // overflow de int64
+		{"9223372036854775807KB", 0, true},
+		{"9223372036854775807", 9223372036854775807, false},
 		{"-5MB", 0, true},
 		{"garbage", 0, true},
 		{"", 0, true},

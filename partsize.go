@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -78,6 +79,9 @@ func parseSize(s string) (int64, error) {
 		mult = 1024 * 1024 * 1024
 	default:
 		return 0, fmt.Errorf("size %q: unknown suffix %q", s, suffix)
+	}
+	if n > math.MaxInt64/mult {
+		return 0, fmt.Errorf("size %q: too large", s)
 	}
 	return n * mult, nil
 }
