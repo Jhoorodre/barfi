@@ -1850,25 +1850,33 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 			var fileOrDir string
 			var recursive bool
 			var isDir bool
+			var paths []string
 
 			if err := huh.NewForm(huh.NewGroup(
-				huh.NewInput().
-					Title("Arquivo ou pasta para enviar").
-					Description("Caminho completo ou relativo. Aspas são ignoradas. Aceita Windows e WSL.").
+				huh.NewText().
+					Title("Arquivo(s) ou pasta(s) para enviar").
+					Description("Um caminho por linha (Alt+Enter ou Ctrl+J p/ nova linha). Caminho completo ou relativo. Aspas são ignoradas. Aceita Windows e WSL.").
 					Value(&fileOrDir).
 					Validate(func(str string) error {
-						str = strings.Trim(str, `"' `)
-						if str == "" {
+						paths, isDir = nil, false
+						for _, line := range strings.Split(str, "\n") {
+							line = strings.Trim(line, "\"' \t\r")
+							if line == "" {
+								continue
+							}
+							info, err := os.Stat(normalizePath(line))
+							if err != nil {
+								if os.IsNotExist(err) {
+									return errors.New("não encontrado(a): " + line)
+								}
+								return err
+							}
+							isDir = isDir || info.IsDir()
+							paths = append(paths, normalizePath(line))
+						}
+						if len(paths) == 0 {
 							return errors.New("o caminho não pode ser vazio")
 						}
-						info, err := os.Stat(normalizePath(str))
-						if err != nil {
-							if os.IsNotExist(err) {
-								return errors.New("arquivo ou pasta não encontrado(a)")
-							}
-							return err
-						}
-						isDir = info.IsDir()
 						return nil
 					}),
 			)).Run(); err != nil {
@@ -1877,7 +1885,6 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 				}
 				return err
 			}
-			fileOrDir = strings.Trim(fileOrDir, `"' `)
 
 			var extraFields []huh.Field
 			if isDir {
@@ -1911,7 +1918,7 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 				cfg.ParentId = folderID
 			}
 
-			opts.files = []string{normalizePath(fileOrDir)}
+			opts.files = paths
 			opts.recursive = recursive
 			opts.note = note
 			return nil
