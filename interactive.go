@@ -1716,6 +1716,30 @@ func manageLibrary(cliOpts *cliOptions, cfg *Config, mCfg *MultiConfig) error {
 	}
 }
 
+// parseUploadPaths valida um caminho por linha (aspas e espaços nas pontas são
+// ignorados), devolvendo os caminhos normalizados e se algum é diretório.
+func parseUploadPaths(input string) (paths []string, anyDir bool, err error) {
+	for _, line := range strings.Split(input, "\n") {
+		line = strings.Trim(line, "\"' \t\r")
+		if line == "" {
+			continue
+		}
+		info, err := os.Stat(normalizePath(line))
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, false, errors.New("não encontrado(a): " + line)
+			}
+			return nil, false, err
+		}
+		anyDir = anyDir || info.IsDir()
+		paths = append(paths, normalizePath(line))
+	}
+	if len(paths) == 0 {
+		return nil, false, errors.New("o caminho não pode ser vazio")
+	}
+	return paths, anyDir, nil
+}
+
 func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error {
 	for {
 		var action string
@@ -1858,26 +1882,9 @@ func runInteractiveMode(opts *cliOptions, mCfg *MultiConfig, cfg *Config) error 
 					Description("Um caminho por linha (Alt+Enter ou Ctrl+J p/ nova linha). Caminho completo ou relativo. Aspas são ignoradas. Aceita Windows e WSL.").
 					Value(&fileOrDir).
 					Validate(func(str string) error {
-						paths, isDir = nil, false
-						for _, line := range strings.Split(str, "\n") {
-							line = strings.Trim(line, "\"' \t\r")
-							if line == "" {
-								continue
-							}
-							info, err := os.Stat(normalizePath(line))
-							if err != nil {
-								if os.IsNotExist(err) {
-									return errors.New("não encontrado(a): " + line)
-								}
-								return err
-							}
-							isDir = isDir || info.IsDir()
-							paths = append(paths, normalizePath(line))
-						}
-						if len(paths) == 0 {
-							return errors.New("o caminho não pode ser vazio")
-						}
-						return nil
+						var err error
+						paths, isDir, err = parseUploadPaths(str)
+						return err
 					}),
 			)).Run(); err != nil {
 				if errors.Is(err, huh.ErrUserAborted) {
